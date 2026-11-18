@@ -1,0 +1,316 @@
+const router = require("../http/router").Router();
+const { requireAuth, allowRoles } = require("../middleware/auth");
+const Donor = require("../models/Donor");
+const Batch = require("../models/Batch");
+const Vial = require("../models/Vial");
+const crypto = require("crypto");
+const { withTransaction } = require("../services/transactionService");
+const { recordOperationalEvent } = require("../services/operationalAuditService");
+
+// Quick-pick heights use feet.inches notation (for example, 5.8 means 5 ft 8 in).
+// Historical height strings remain valid for backward compatibility.
+const STANDARD_HEIGHTS = ["5.6 ft", "5.7 ft", "5.8 ft", "5.9 ft", "5.10 ft", "5.11 ft", "6.0 ft"];
+const isFeetInchesHeight = value => /^\d+\.(?:[0-9]|1[01])\s*ft$/i.test(value);
+
+const UHID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const makeUhid = () => Array.from({ length: 5 }, () => UHID_ALPHABET[crypto.randomInt(UHID_ALPHABET.length)]).join("");
+const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const ageOn = (dob, today = new Date()) => {
+  let age = today.getUTCFullYear() - dob.getUTCFullYear();
+  const birthdayPassed = today.getUTCMonth() > dob.getUTCMonth() || (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() >= dob.getUTCDate());
+  return birthdayPassed ? age : age - 1;
+};
+
+// =====================================================
+// GET ALL DONORS
+// =====================================================
+
+router.get("/unit-search", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 64) : "";
+  if (!query) return res.json({ success: true, data: [] });
+  try {
+    const pattern = new RegExp(`^${escapeRegex(query)}`, "i");
+    const donors = await Donor.find({
+      status: { $ne: "Inactive" },
+      $or: [{ unitNumber: pattern }, { uhid: pattern }, { manualDonorId: pattern }, { donorId: pattern }, { name: pattern }]
+    })
+      .select("donorId uhid manualDonorId unitNumber name bloodGroup lastCollectionAt")
+      .sort({ donorId: 1 }).limit(20).lean();
+    const latestBatches = await Batch.aggregate([
+      { $match: { "donor.donorId": { $in: donors.map(donor => donor.donorId) } } },
+      { $sort: { collectionAt: -1 } },
+      { $group: { _id: "$donor.donorId", collectionAt: { $first: "$collectionAt" } } }
+    ]);
+    const latestByDonor = new Map(latestBatches.map(batch => [batch._id, batch.collectionAt]));
+    return res.json({ success: true, data: donors.map(donor => ({
+      donorId: donor.donorId,
+      uhid: donor.uhid,
+      manualDonorId: donor.manualDonorId,
+      unitNumber: donor.unitNumber,
+      name: donor.name,
+      bloodGroup: donor.bloodGroup,
+      lastCollectionAt: [donor.lastCollectionAt, latestByDonor.get(donor.donorId)].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0] || null
+    })) });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to search donors by Unit Number", errorCode: "DONOR_UNIT_SEARCH_ERROR" });
+  }
+});
+
+router.get("/available-stock", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  try {
+    const now = new Date();
+    const available = await Vial.aggregate([
+      { $match: { status: "AVAILABLE_AT_ART_BANK", quarantineEnd: { $lte: now }, donorId: { $type: "string", $ne: "" } } },
+      { $group: { _id: { donorId: "$donorId", bloodGroup: "$bloodGroup" }, count: { $sum: 1 } } },
+      { $group: { _id: "$_id.donorId", availableVialCount: { $sum: "$count" }, bloodGroups: { $push: { bloodGroup: "$_id.bloodGroup", count: "$count" } } } }
+    ]);
+    const donorIds = available.map(item => item._id);
+    const donors = await Donor.find({ donorId: { $in: donorIds }, status: { $ne: "Inactive" } })
+      .select("donorId uhid manualDonorId name bloodGroup height complexion eyeColour hairColour build")
+      .sort({ name: 1, donorId: 1 }).lean();
+    const stockByDonor = new Map(available.map(item => [item._id, item]));
+    res.json({ success: true, data: donors.map(donor => ({
+      ...donor,
+      availableVialCount: stockByDonor.get(donor.donorId)?.availableVialCount || 0,
+      bloodGroups: stockByDonor.get(donor.donorId)?.bloodGroups || []
+    })) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Failed to fetch donors with released stock", errorCode: "AVAILABLE_DONORS_FETCH_ERROR" });
+  }
+});
+
+router.get(
+  "/",
+  requireAuth,
+  allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"),
+  async (req, res) => {
+    try {
+      const filter = {};
+      const search = String(req.query.q || "").trim().slice(0, 100);
+      if (search) {
+        const pattern = new RegExp(escapeRegex(search), "i");
+        filter.$or = [{ donorId: pattern }, { uhid: pattern }, { manualDonorId: pattern }, { unitNumber: pattern }, { name: pattern }];
+      }
+      const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 500);
+      const skip = Math.min(Math.max(Number.parseInt(req.query.skip, 10) || 0, 0), 100000);
+      const [donors, total] = await Promise.all([Donor.find(filter)
+        .select("-aadhaarHash")
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip).limit(limit), Donor.countDocuments(filter)]);
+
+      res.json({
+        success: true,
+        data: donors,
+        pagination: { skip, limit, total, hasMore: skip + donors.length < total }
+      });
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch donors",
+        errorCode: "DONORS_FETCH_ERROR"
+      });
+    }
+  }
+);
+
+
+// =====================================================
+// Return standard options plus existing values so historical donor heights
+// remain selectable without rewriting old records.
+router.get("/height-options", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  try {
+    const historicalValues = await Donor.distinct("height", { height: { $type: "string", $ne: "" } });
+    const values = [...new Set([...STANDARD_HEIGHTS, ...historicalValues.map(String)])];
+    values.sort((left, right) => {
+      const a = Number(left), b = Number(right);
+      return Number.isFinite(a) && Number.isFinite(b) ? a - b : String(left).localeCompare(String(right));
+    });
+    return res.json({ success: true, data: values });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to fetch existing height values", errorCode: "DONOR_HEIGHT_OPTIONS_ERROR" });
+  }
+});
+
+// Duplicate review uses the same name/date-of-birth/blood-group tuple as the
+// registration UI, but queries the full donor collection instead of a loaded page.
+router.get("/possible-duplicates", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
+  const dobValue = typeof req.query.dob === "string" ? req.query.dob : "";
+  const bloodGroup = typeof req.query.bloodGroup === "string" ? req.query.bloodGroup.trim() : "";
+  const dobStart = /^\d{4}-\d{2}-\d{2}$/.test(dobValue) ? new Date(`${dobValue}T00:00:00.000Z`) : null;
+  if (!name || !bloodGroup || !dobStart || Number.isNaN(dobStart.getTime()) || dobStart.toISOString().slice(0, 10) !== dobValue) {
+    return res.status(400).json({ success: false, message: "Name, valid date of birth and blood group are required", errorCode: "INVALID_DUPLICATE_LOOKUP" });
+  }
+  const dobEnd = new Date(dobStart);
+  dobEnd.setUTCDate(dobEnd.getUTCDate() + 1);
+  const filter = {
+    name: new RegExp(`^${escapeRegex(name)}$`, "i"),
+    dob: { $gte: dobStart, $lt: dobEnd },
+    bloodGroup: new RegExp(`^${escapeRegex(bloodGroup)}$`, "i")
+  };
+  try {
+    const [donors, matches] = await Promise.all([
+      Donor.find(filter).select("donorId uhid name dob bloodGroup").sort({ createdAt: -1, _id: -1 }).limit(20).lean(),
+      Donor.countDocuments(filter)
+    ]);
+    return res.json({ success: true, data: { matches, donors, truncated: matches > donors.length } });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to check possible duplicate donors", errorCode: "DONOR_DUPLICATE_CHECK_ERROR" });
+  }
+});
+
+// GET DONOR BY ID
+// =====================================================
+
+router.get(
+  "/:donorId",
+  requireAuth,
+  allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"),
+  async (req, res) => {
+    try {
+      const donor = await Donor.findOne({
+        donorId: req.params.donorId
+      }).select("-aadhaarHash");
+
+      if (!donor) {
+        return res.status(404).json({
+          success: false,
+          message: "Donor not found",
+          errorCode: "DONOR_NOT_FOUND"
+        });
+      }
+
+      res.json({
+        success: true,
+        data: donor
+      });
+
+    } catch (error) {
+      console.error(error);
+
+      res.status(500).json({
+        success: false,
+        message: "Failed to fetch donor",
+        errorCode: "DONOR_FETCH_ERROR"
+      });
+    }
+  }
+);
+
+
+// =====================================================
+// CREATE DONOR
+// =====================================================
+
+// UHID lookup is additive; the existing donorId lookup remains unchanged.
+router.get("/uhid/:uhid", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  try {
+    const donors = await Donor.find({ uhid: String(req.params.uhid).toUpperCase() }).select("-aadhaarHash").sort({ createdAt: -1 }).limit(100);
+    return res.json({ success: true, data: donors });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to fetch donors by UHID", errorCode: "DONORS_FETCH_ERROR" });
+  }
+});
+
+router.post(
+  "/",
+  requireAuth,
+  allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"),
+  async (req, res) => {
+    try {
+      const dob = new Date(req.body.dob);
+      if (!req.body.dob || Number.isNaN(dob.getTime()) || dob > new Date()) {
+        return res.status(400).json({ success: false, message: "Date of birth must be a valid date in the past", errorCode: "INVALID_DOB" });
+      }
+      if (ageOn(dob) < 21 || ageOn(dob) > 55) {
+        return res.status(400).json({ success: false, message: "Donor age must be between 21 and 55 years", errorCode: "DONOR_AGE_INELIGIBLE" });
+      }
+      const { aadhaar, name, manualDonorId, unitNumber, maritalStatus, bloodGroup, status, height, complexion, eyeColour, hairColour, build } = req.body;
+      if (!String(name || "").trim() || !String(manualDonorId || "").trim() || !["MARRIED", "UNMARRIED"].includes(maritalStatus) || !String(bloodGroup || "").trim()) {
+        return res.status(400).json({ success: false, message: "Name, manual donor ID, marital status and blood group are required", errorCode: "REQUIRED_DONOR_FIELDS" });
+      }
+      if (!/^\d{12}$/.test(String(aadhaar || ""))) {
+        return res.status(400).json({ success: false, message: "Aadhaar must contain exactly 12 digits", errorCode: "INVALID_AADHAAR" });
+      }
+      const allowedTraits = { complexion: ["Fair", "Wheatish"], eyeColour: ["Black", "Brown"], hairColour: ["Black", "Brown"], build: ["Slim", "Moderate"] };
+      for (const [field, allowed] of Object.entries(allowedTraits)) {
+        const value = req.body[field];
+        if (value !== undefined && value !== null && value !== "" && (typeof value !== "string" || !allowed.includes(value))) {
+          return res.status(400).json({ success: false, message: `Invalid ${field} value`, errorCode: "INVALID_DONOR_TRAIT" });
+        }
+      }
+      if (height !== undefined && height !== null && height !== "") {
+        const existingHeights = await Donor.distinct("height", { height: { $type: "string", $ne: "" } });
+        const normalizedHeight = String(height).trim();
+        if (!isFeetInchesHeight(normalizedHeight) && !existingHeights.includes(normalizedHeight)) {
+          return res.status(400).json({ success: false, message: "Height must use feet.inches notation (for example, 5.8 ft) or match an existing historical donor value", errorCode: "INVALID_HEIGHT" });
+        }
+      }
+      const normalizedManualId = String(manualDonorId).trim();
+      const normalizedUnitNumber = String(unitNumber || "").trim().toUpperCase();
+      if (normalizedManualId.length > 50) {
+        return res.status(400).json({ success: false, message: "Manual donor ID must be 50 characters or fewer", errorCode: "INVALID_MANUAL_DONOR_ID" });
+      }
+      if (normalizedUnitNumber.length > 30) {
+        return res.status(400).json({ success: false, message: "Unit Number must be 30 characters or fewer", errorCode: "INVALID_UNIT_NUMBER" });
+      }
+      if (await Donor.exists({ manualDonorId: normalizedManualId })) {
+        return res.status(409).json({ success: false, message: "Manual donor ID already exists", errorCode: "MANUAL_DONOR_ID_EXISTS" });
+      }
+      if (normalizedUnitNumber && await Donor.exists({ unitNumber: normalizedUnitNumber })) {
+        return res.status(409).json({ success: false, message: "Unit Number already exists", errorCode: "UNIT_NUMBER_EXISTS" });
+      }
+
+      let donor;
+      let donorId = `DON-${crypto.randomUUID()}`;
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const uhid = makeUhid();
+        try {
+          donor = await withTransaction(async session => {
+            const [created] = await Donor.create([{
+              donorId, uhid, manualDonorId: normalizedManualId, ...(normalizedUnitNumber ? { unitNumber: normalizedUnitNumber } : {}),
+              name: String(name).trim(), aadhaarHash: crypto.createHash("sha256").update(String(aadhaar)).digest("hex"),
+              aadhaarMasked: `${String(aadhaar).slice(0, 2)}••••••••${String(aadhaar).slice(-2)}`,
+              dob, maritalStatus, bloodGroup: String(bloodGroup).trim(), status: status || "Active",
+              height: typeof height === "string" ? height.trim() : height, complexion, eyeColour, hairColour, build
+            }], { session });
+            await recordOperationalEvent({
+              actorId: String(req.user.id), role: req.user.role, event: "DONOR_CREATED", entityId: donorId,
+              metadata: { status: created.status }, ip: req.ip, session
+            });
+            return created;
+          });
+          break;
+        } catch (error) {
+          if (error?.code === 11000 && error?.keyPattern?.donorId) donorId = `DON-${crypto.randomUUID()}`;
+          if (error?.code !== 11000 || attempt === 4) throw error;
+        }
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Donor created",
+        data: { ...donor.toObject(), aadhaarHash: undefined }
+      });
+
+    } catch (error) {
+      if (error?.code === 11000 && error?.keyPattern?.manualDonorId) {
+        return res.status(409).json({ success: false, message: "Manual donor ID already exists", errorCode: "MANUAL_DONOR_ID_EXISTS" });
+      }
+      if (error?.code === 11000 && error?.keyPattern?.unitNumber) {
+        return res.status(409).json({ success: false, message: "Unit Number already exists", errorCode: "UNIT_NUMBER_EXISTS" });
+      }
+      console.error(error);
+
+      res.status(500).json({ success: false, message: "Failed to create donor", errorCode: "DONOR_CREATE_ERROR" });
+    }
+  }
+);
+
+
+module.exports = router;

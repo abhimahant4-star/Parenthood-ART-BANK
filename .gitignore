@@ -1,0 +1,20 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+
+# Secrets and local settings
+.env
+.env.local
+.env.production
+.env.*.local
+
+# Private data
+.local-mongodb/
+private-uploads/
+private_uploads/
+backups/
+certs/
+
+# Logs
+*.log
