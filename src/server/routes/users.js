@@ -304,11 +304,17 @@ router.put(
         centreId,
         centreName,
         chainId,
-        active
+        active,
+        linkedCeoId
       } = req.body;
       if (active !== undefined && typeof active !== "boolean") {
         return res.status(400).json({ success: false, message: "active must be a boolean", errorCode: "INVALID_ACTIVE_STATUS" });
       }
+      // linkedCeoId: a CEO account ID to link, "" or null to unlink, or undefined to leave unchanged.
+      if (linkedCeoId !== undefined && linkedCeoId !== null && (typeof linkedCeoId !== "string" || (linkedCeoId.trim() && !mongoose.Types.ObjectId.isValid(linkedCeoId.trim())))) {
+        return res.status(400).json({ success: false, message: "Choose a valid active CEO account or leave the hospital unlinked", errorCode: "INVALID_CEO_LINK" });
+      }
+      const requestedCeoId = linkedCeoId === undefined ? undefined : (typeof linkedCeoId === "string" ? linkedCeoId.trim() : "");
       const assignedHospitalId = hospitalName ? scopeId("HOSP", hospitalName) : hospitalId;
       const assignedCentreId = centreName ? scopeId("CENTRE", centreName) : centreId;
       const result = await withTransaction(async session => {
@@ -336,6 +342,17 @@ router.put(
           return { error: { status: 400, message: "Hospital users must be assigned a hospital and centre", errorCode: "HOSPITAL_SCOPE_REQUIRED" } };
         }
 
+        if (requestedCeoId !== undefined) {
+          if (targetRole !== "HOSPITAL_USER") {
+            return { error: { status: 400, message: "Only hospital accounts can be linked to a CEO", errorCode: "INVALID_CEO_LINK" } };
+          }
+          if (requestedCeoId && !await User.exists({ _id: requestedCeoId, role: "CHAIN_CEO", active: true }).session(session)) {
+            return { error: { status: 400, message: "The selected CEO account is inactive or unavailable", errorCode: "INVALID_CEO_LINK" } };
+          }
+        }
+        const ceoLinkChanged = requestedCeoId !== undefined && (requestedCeoId || null) !== (user.linkedCeoId || null);
+        if (ceoLinkChanged) user.linkedCeoId = requestedCeoId || null;
+
         if (name !== undefined) user.name = name;
         if (role !== undefined) user.role = role;
         if (assignedHospitalId !== undefined) user.hospitalId = assignedHospitalId || null;
@@ -362,6 +379,7 @@ router.put(
         if (active !== undefined) metadata.active = user.active;
         if (assignedHospitalId && /^[A-Za-z0-9_.:-]{1,160}$/.test(assignedHospitalId)) metadata.hospitalId = assignedHospitalId;
         if (assignedCentreId && /^[A-Za-z0-9_.:-]{1,160}$/.test(assignedCentreId)) metadata.centreId = assignedCentreId;
+        if (ceoLinkChanged) metadata.ceoLinked = Boolean(user.linkedCeoId);
         await recordOperationalEvent({
           actorId: String(req.user.id), role: req.user.role, event: "USER_UPDATED", entityId: String(user._id),
           metadata, ip: req.ip, session

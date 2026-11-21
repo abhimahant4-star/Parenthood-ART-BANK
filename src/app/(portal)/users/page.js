@@ -65,12 +65,13 @@ function HospitalRegistrationModal({ ceos, onClose, onDone }) {
   );
 }
 
-function UserModal({ existing, hospitals, onClose, onSaved }) {
+function UserModal({ existing, hospitals, ceos = [], onClose, onSaved }) {
   const editing = Boolean(existing);
   const legacyScope = editing && (!existing.hospitalName || !existing.centreName);
   const [form, setForm] = useState({
     name: existing?.name || "", username: existing?.username || "", password: "", role: existing?.role || "",
-    hospitalName: existing?.hospitalName || "", centreName: existing?.centreName || "", chainId: existing?.chainId || ""
+    hospitalName: existing?.hospitalName || "", centreName: existing?.centreName || "", chainId: existing?.chainId || "",
+    linkedCeoId: existing?.linkedCeoId || ""
   });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -88,13 +89,18 @@ function UserModal({ existing, hospitals, onClose, onSaved }) {
     if (saving) return;
     setSaving(true);
     setError("");
+    // When editing, send the hospital and centre only if they changed, so saving a CEO link
+    // or name never re-derives (and moves) an existing hospital's ID.
+    const scopeUnchanged = editing && form.hospitalName.trim() === (existing.hospitalName || "") && form.centreName.trim() === (existing.centreName || "");
+    const sendScope = hospitalUser && !scopeUnchanged;
     const body = {
       name: form.name.trim(), role: form.role,
-      hospitalId: hospitalUser && keepingLegacyScope ? hospitalIdPreview : undefined,
-      centreId: hospitalUser && keepingLegacyScope ? centreIdPreview : undefined,
-      hospitalName: hospitalUser && !keepingLegacyScope ? form.hospitalName.trim() : undefined,
-      centreName: hospitalUser && !keepingLegacyScope ? form.centreName.trim() : undefined,
-      chainId: form.role === "CHAIN_CEO" ? form.chainId.trim() : undefined
+      hospitalId: sendScope && keepingLegacyScope ? hospitalIdPreview : undefined,
+      centreId: sendScope && keepingLegacyScope ? centreIdPreview : undefined,
+      hospitalName: sendScope && !keepingLegacyScope ? form.hospitalName.trim() : undefined,
+      centreName: sendScope && !keepingLegacyScope ? form.centreName.trim() : undefined,
+      chainId: form.role === "CHAIN_CEO" ? form.chainId.trim() : undefined,
+      linkedCeoId: editing && hospitalUser ? form.linkedCeoId : undefined
     };
     try {
       if (editing) await apiRequest(`/users/${encodeURIComponent(existing._id)}`, { method: "PUT", body });
@@ -131,7 +137,13 @@ function UserModal({ existing, hospitals, onClose, onSaved }) {
           <label className="form-label mt-2" htmlFor="userCentreId">Assigned Centre ID</label>
           <input className="form-control" id="userCentreId" readOnly value={centreIdPreview} />
         </div>
-        <Field {...fieldProps} label="Chain ID (Chain CEO only)" name="chainId" />
+        {editing && hospitalUser ? (
+          <Field {...fieldProps} label="Linked CEO" name="linkedCeoId" hint="The linked CEO can see this hospital's name, stock, orders and dispatch status. Patient, couple and declaration details stay private." choices={[
+            { value: "", label: "Not linked to a CEO" },
+            ...ceos.map(ceo => ({ value: ceo._id, label: `${ceo.name || ceo.username} (${ceo.username})` })),
+            ...(form.linkedCeoId && !ceos.some(ceo => ceo._id === form.linkedCeoId) ? [{ value: form.linkedCeoId, label: "Inactive or removed CEO account" }] : [])
+          ]} />
+        ) : <Field {...fieldProps} label="Chain ID (Chain CEO only)" name="chainId" />}
       </form>
       <p className="small text-secondary mt-3">Enter the full hospital and centre names. IDs are assigned automatically and shared by users with matching names. Legacy scopes remain unchanged until their names are recorded. Changing scope revokes this user&apos;s current session.</p>
     </Modal>
@@ -141,10 +153,15 @@ function UserModal({ existing, hospitals, onClose, onSaved }) {
 export default function UsersPage() {
   const list = usePagedList("/users");
   const hospitals = useLoader(async () => (await apiRequest("/hospitals")).data || [], []);
+  const ceos = useLoader(async () => (await apiRequest("/users/ceos")).data || [], []);
+  const ceoName = id => {
+    const ceo = (ceos.data || []).find(item => item._id === id);
+    return ceo ? ceo.name || ceo.username : "Inactive CEO";
+  };
   const [modal, setModal] = useState(null);
   const [message, setMessage] = useState("");
 
-  const finish = () => { setModal(null); list.reload(); hospitals.reload(); };
+  const finish = () => { setModal(null); list.reload(); hospitals.reload(); ceos.reload(); };
   const registerHospital = async () => {
     setMessage("");
     try { setModal({ type: "hospital", ceos: (await apiRequest("/users/ceos")).data || [] }); }
@@ -164,7 +181,7 @@ export default function UsersPage() {
         <button className="btn btn-outline-primary me-2" type="button" onClick={registerHospital}>Register hospital</button>
         <button className="btn btn-primary" type="button" onClick={() => setModal({ type: "user" })}>Create user</button>
       </div>} />
-      <Alert message={message || list.error} />
+      <Alert message={message || list.error || (ceos.error ? `Could not load CEO accounts: ${ceos.error}` : "")} />
       <div className="section-card">
         <DataTable headers={["Name", "Username", "Role", "Data scope", "Status", "Action"]} empty={list.loading ? "Loading users…" : "No records yet"}>
           {list.records.map(account => (
@@ -172,10 +189,13 @@ export default function UsersPage() {
               <td className="fw-semibold">{account.name || ""}</td>
               <td><IdTag value={account.username} icon="person" tone="slate" /></td>
               <td><span className="nl-pill nl-pill-role">{roleLabel(account.role)}</span></td>
-              <td>{account.hospitalId ? <span className="nl-mono">{account.hospitalId} / {account.centreId || "Unassigned"}</span> : <span className="text-secondary">{account.chainId || "Global"}</span>}</td>
+              <td>
+                {account.hospitalId ? <span className="nl-mono">{account.hospitalId} / {account.centreId || "Unassigned"}</span> : <span className="text-secondary">{account.chainId || "Global"}</span>}
+                {account.role === "HOSPITAL_USER" && <div className="nl-mono-muted mt-1">{account.linkedCeoId ? `Linked CEO: ${ceoName(account.linkedCeoId)}` : "No linked CEO"}</div>}
+              </td>
               <td><Badge status={account.active ? "ACTIVE" : "INACTIVE"} /></td>
               <td className="d-flex gap-2">
-                {account.role === "HOSPITAL_USER" && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ type: "user", existing: account })}>Edit scope</button>}
+                {account.role === "HOSPITAL_USER" && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ type: "user", existing: account })}>Edit scope / CEO</button>}
                 <button className="btn btn-sm btn-outline-secondary" type="button" onClick={() => setActive(account, !account.active)}>{account.active ? "Deactivate" : "Activate"}</button>
               </td>
             </tr>
@@ -184,7 +204,7 @@ export default function UsersPage() {
         <LoadMore list={list} label="users" />
       </div>
       {modal?.type === "hospital" && <HospitalRegistrationModal ceos={modal.ceos} onClose={() => setModal(null)} onDone={finish} />}
-      {modal?.type === "user" && <UserModal existing={modal.existing} hospitals={hospitals.data || []} onClose={() => setModal(null)} onSaved={finish} />}
+      {modal?.type === "user" && <UserModal existing={modal.existing} hospitals={hospitals.data || []} ceos={ceos.data || []} onClose={() => setModal(null)} onSaved={finish} />}
     </>
   );
 }
