@@ -5,13 +5,14 @@ const Batch = require("../models/Batch");
 const Vial = require("../models/Vial");
 const Donor = require("../models/Donor");
 const IdSequence = require("../models/IdSequence");
+const { flexibleIdPattern } = require("../utils/flexibleSearch");
 const { withTransaction, RouteError, sendRouteError } = require("../services/transactionService");
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 const { parseCollectionDate, addCalendarMonths, nextCollectionDate, isAtOrAfterDate, isQuarantineComplete, formatBatchId, makeVialIds } = require("../services/batchRules");
 
 async function nextBatchId() {
-  const year = new Date().getUTCFullYear();
-  const name = `batch-${year}`;
+  // One running counter for short batch IDs (BAT-101, BAT-102, ...). Older ARTB-year IDs are kept as they are.
+  const name = "batch-short";
   await IdSequence.init();
   let sequence;
   try {
@@ -25,10 +26,10 @@ async function nextBatchId() {
     sequence = await IdSequence.findOneAndUpdate({ name }, { $inc: { value: 1 } }, { new: true }).lean();
     if (!sequence) throw error;
   }
-  if (sequence.value > 99999) {
-    throw new RouteError(409, "The batch sequence has reached its five-digit limit for this year.", "BATCH_SEQUENCE_EXHAUSTED");
+  if (sequence.value > 9999899) {
+    throw new RouteError(409, "The batch sequence has reached its limit.", "BATCH_SEQUENCE_EXHAUSTED");
   }
-  return formatBatchId(year, sequence.value);
+  return formatBatchId(sequence.value);
 }
 
 // =====================================================
@@ -52,13 +53,13 @@ router.get(
       const filter = {};
       if (status) filter.releaseStatus = status;
       if (search) {
-        const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const unitNumberDonors = await Donor.find({ unitNumber: { $regex: escaped, $options: "i" } }).select("donorId").lean();
+        const pattern = flexibleIdPattern(search);
+        const matchingDonors = await Donor.find({ $or: [{ unitNumber: pattern }, { uhid: pattern }, { manualDonorId: pattern }] }).select("donorId").limit(500).lean();
         filter.$or = [
-          { batchId: { $regex: escaped, $options: "i" } },
-          { "donor.donorId": { $regex: escaped, $options: "i" } },
-          { "donor.unitNumber": { $regex: escaped, $options: "i" } },
-          { "donor.donorId": { $in: unitNumberDonors.map(donor => donor.donorId) } }
+          { batchId: pattern },
+          { "donor.donorId": pattern },
+          { "donor.unitNumber": pattern },
+          { "donor.donorId": { $in: matchingDonors.map(donor => donor.donorId) } }
         ];
       }
       const [batches, total, filteredTotal, releaseEligible] = await Promise.all([
@@ -138,7 +139,7 @@ router.post(
         const donorRecord = await Donor.findOne({ $or: [{ donorId }, { uhid: String(donorId).toUpperCase() }] })
           .select("donorId unitNumber bloodGroup lastCollectionAt status").session(session).lean();
         if (!donorRecord) throw new RouteError(404, "Donor not found", "DONOR_NOT_FOUND");
-        if (donorRecord.status === "Inactive") throw new RouteError(400, "Inactive donors cannot be used for a new collection", "DONOR_INACTIVE");
+        if (["Inactive", "Retired"].includes(donorRecord.status)) throw new RouteError(400, `${donorRecord.status} donors cannot be used for a new collection`, "DONOR_INACTIVE");
         const linkedDonorId = donorRecord.donorId;
         const latestBatch = await Batch.findOne({ "donor.donorId": linkedDonorId }).sort({ collectionAt: -1 }).select("collectionAt").session(session).lean();
         const priorCollection = [donorRecord.lastCollectionAt, latestBatch?.collectionAt].filter(Boolean).sort((a, b) => new Date(b) - new Date(a))[0];

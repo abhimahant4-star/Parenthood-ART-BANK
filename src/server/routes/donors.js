@@ -14,6 +14,21 @@ const isFeetInchesHeight = value => /^\d+\.(?:[0-9]|1[01])\s*ft$/i.test(value);
 
 const UHID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const makeUhid = () => Array.from({ length: 5 }, () => UHID_ALPHABET[crypto.randomInt(UHID_ALPHABET.length)]).join("");
+const DONOR_STATUSES = ["Active", "Inactive", "Retired"];
+const INACTIVE_STATUSES = ["Inactive", "Retired"];
+const VIRAL_RESULTS = ["NON_REACTIVE", "REACTIVE", "PENDING"];
+const SCREENING_RESULTS = {
+  hiv: VIRAL_RESULTS, hbsag: VIRAL_RESULTS, hcv: VIRAL_RESULTS, vdrl: VIRAL_RESULTS,
+  thalassemia: ["NORMAL", "CARRIER", "PENDING"], karyotype: ["NORMAL", "ABNORMAL", "PENDING"]
+};
+const AuditLog = require("../models/AuditLog");
+const { withTraceSummary, donorListFilter } = require("../services/donorTraceService");
+const { flexibleIdPattern } = require("../utils/flexibleSearch");
+
+async function recordDonorAudit(req, action, donorId, summary, newValues) {
+  await AuditLog.create({ userId: String(req.user.id), role: req.user.role, action, entity: "DONOR", entityId: donorId, summary, ip: req.ip, newValues });
+}
+
 const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const ageOn = (dob, today = new Date()) => {
   let age = today.getUTCFullYear() - dob.getUTCFullYear();
@@ -29,10 +44,12 @@ router.get("/unit-search", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMI
   const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 64) : "";
   if (!query) return res.json({ success: true, data: [] });
   try {
-    const pattern = new RegExp(`^${escapeRegex(query)}`, "i");
+    // The collection picker matches from the start of an ID, ignoring dashes and slashes.
+    const pattern = flexibleIdPattern(query, { prefix: true });
+    const namePattern = new RegExp(`^${escapeRegex(query)}`, "i");
     const donors = await Donor.find({
-      status: { $ne: "Inactive" },
-      $or: [{ unitNumber: pattern }, { uhid: pattern }, { manualDonorId: pattern }, { donorId: pattern }, { name: pattern }]
+      status: { $nin: INACTIVE_STATUSES },
+      $or: [{ unitNumber: pattern }, { uhid: pattern }, { manualDonorId: pattern }, { donorId: pattern }, { name: namePattern }]
     })
       .select("donorId uhid manualDonorId unitNumber name bloodGroup lastCollectionAt")
       .sort({ donorId: 1 }).limit(20).lean();
@@ -66,7 +83,7 @@ router.get("/available-stock", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_
       { $group: { _id: "$_id.donorId", availableVialCount: { $sum: "$count" }, bloodGroups: { $push: { bloodGroup: "$_id.bloodGroup", count: "$count" } } } }
     ]);
     const donorIds = available.map(item => item._id);
-    const donors = await Donor.find({ donorId: { $in: donorIds }, status: { $ne: "Inactive" } })
+    const donors = await Donor.find({ donorId: { $in: donorIds }, status: { $nin: INACTIVE_STATUSES } })
       .select("donorId uhid manualDonorId name bloodGroup height complexion eyeColour hairColour build")
       .sort({ name: 1, donorId: 1 }).lean();
     const stockByDonor = new Map(available.map(item => [item._id, item]));
@@ -87,22 +104,17 @@ router.get(
   allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"),
   async (req, res) => {
     try {
-      const filter = {};
-      const search = String(req.query.q || "").trim().slice(0, 100);
-      if (search) {
-        const pattern = new RegExp(escapeRegex(search), "i");
-        filter.$or = [{ donorId: pattern }, { uhid: pattern }, { manualDonorId: pattern }, { unitNumber: pattern }, { name: pattern }];
-      }
+      const filter = donorListFilter(req.query);
       const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 100, 1), 500);
       const skip = Math.min(Math.max(Number.parseInt(req.query.skip, 10) || 0, 0), 100000);
       const [donors, total] = await Promise.all([Donor.find(filter)
         .select("-aadhaarHash")
         .sort({ createdAt: -1, _id: -1 })
-        .skip(skip).limit(limit), Donor.countDocuments(filter)]);
+        .skip(skip).limit(limit).lean(), Donor.countDocuments(filter)]);
 
       res.json({
         success: true,
-        data: donors,
+        data: await withTraceSummary(donors),
         pagination: { skip, limit, total, hasMore: skip + donors.length < total }
       });
     } catch (error) {
@@ -234,6 +246,9 @@ router.post(
       if (!String(name || "").trim() || !String(manualDonorId || "").trim() || !["MARRIED", "UNMARRIED"].includes(maritalStatus) || !String(bloodGroup || "").trim()) {
         return res.status(400).json({ success: false, message: "Name, manual donor ID, marital status and blood group are required", errorCode: "REQUIRED_DONOR_FIELDS" });
       }
+      if (status !== undefined && status !== "" && !DONOR_STATUSES.includes(status)) {
+        return res.status(400).json({ success: false, message: "Donor status must be Active, Inactive or Retired", errorCode: "INVALID_DONOR_STATUS" });
+      }
       if (!/^\d{12}$/.test(String(aadhaar || ""))) {
         return res.status(400).json({ success: false, message: "Aadhaar must contain exactly 12 digits", errorCode: "INVALID_AADHAAR" });
       }
@@ -312,5 +327,57 @@ router.post(
   }
 );
 
+// Records the donor's statutory screening results (HIV, HBsAg, HCV, VDRL, thalassemia, karyotype).
+router.patch("/:donorId/screening", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {
+  try {
+    const screening = {};
+    for (const [test, allowed] of Object.entries(SCREENING_RESULTS)) {
+      const value = req.body?.[test];
+      if (value === undefined || value === "") continue;
+      if (!allowed.includes(value)) {
+        return res.status(400).json({ success: false, message: `Invalid ${test} result`, errorCode: "INVALID_SCREENING_RESULT" });
+      }
+      screening[test] = value;
+    }
+    const testedOnValue = req.body?.testedOn;
+    const testedOn = testedOnValue ? new Date(`${testedOnValue}T00:00:00.000Z`) : null;
+    if (testedOnValue && (!/^\d{4}-\d{2}-\d{2}$/.test(testedOnValue) || Number.isNaN(testedOn.getTime()) || testedOn > new Date())) {
+      return res.status(400).json({ success: false, message: "Test date must be a valid date that is not in the future", errorCode: "INVALID_SCREENING_DATE" });
+    }
+    if (!Object.keys(screening).length) {
+      return res.status(400).json({ success: false, message: "Enter at least one screening result", errorCode: "SCREENING_REQUIRED" });
+    }
+
+    const donor = await Donor.findOneAndUpdate(
+      { donorId: req.params.donorId },
+      { $set: { screening: { ...screening, ...(testedOn ? { testedOn } : {}), updatedBy: req.user.username, updatedAt: new Date() } } },
+      { new: true }
+    ).select("-aadhaarHash").lean();
+    if (!donor) return res.status(404).json({ success: false, message: "Donor not found", errorCode: "DONOR_NOT_FOUND" });
+    await recordDonorAudit(req, "DONOR_SCREENING_UPDATED", donor.donorId, "Donor screening results recorded");
+    return res.json({ success: true, message: "Screening results saved", data: donor });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to save screening results", errorCode: "DONOR_SCREENING_ERROR" });
+  }
+});
+
+// Changes a donor between Active, Inactive and Retired. Inactive and retired donors cannot give new collections.
+router.patch("/:donorId/status", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN"), async (req, res) => {
+  try {
+    const status = req.body?.status;
+    if (!DONOR_STATUSES.includes(status)) {
+      return res.status(400).json({ success: false, message: "Donor status must be Active, Inactive or Retired", errorCode: "INVALID_DONOR_STATUS" });
+    }
+    const previous = await Donor.findOne({ donorId: req.params.donorId }).select("status").lean();
+    if (!previous) return res.status(404).json({ success: false, message: "Donor not found", errorCode: "DONOR_NOT_FOUND" });
+    const donor = await Donor.findOneAndUpdate({ donorId: req.params.donorId }, { $set: { status } }, { new: true }).select("-aadhaarHash").lean();
+    await recordDonorAudit(req, "DONOR_STATUS_CHANGED", donor.donorId, "Donor status changed", { previousStatus: previous.status || "Active", status });
+    return res.json({ success: true, message: "Donor status updated", data: donor });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to update donor status", errorCode: "DONOR_STATUS_ERROR" });
+  }
+});
 
 module.exports = router;

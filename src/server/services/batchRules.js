@@ -30,25 +30,31 @@ function isQuarantineComplete(quarantineEnd, currentTime = new Date()) {
   return isAtOrAfterDate(currentTime, quarantineEnd);
 }
 
-function formatBatchId(year, sequence) {
-  if (!Number.isInteger(year) || year < 2000 || year > 9999 || !Number.isSafeInteger(sequence) || sequence < 1 || sequence > 99999) {
-    throw new RangeError("Batch year must be valid and sequence must be from 1 to 99999.");
+// Short, easy-to-type IDs: the first batch is BAT-101, the next BAT-102, and so on.
+const BATCH_NUMBER_OFFSET = 100;
+const MAX_BATCH_SEQUENCE = 9999899;
+
+function formatBatchId(sequence) {
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > MAX_BATCH_SEQUENCE) {
+    throw new RangeError(`Batch sequence must be from 1 to ${MAX_BATCH_SEQUENCE}.`);
   }
-  return `ARTB-${year}-${String(sequence).padStart(5, "0")}`;
+  return `BAT-${sequence + BATCH_NUMBER_OFFSET}`;
 }
 
+// Vials take the batch's position plus a two-digit vial number: BAT-101 gives V-101 to V-105, BAT-102 gives V-201.
 function makeVialIds(batchId, count, bloodGroup) {
   if (!Number.isInteger(Number(count)) || Number(count) < 1 || Number(count) > 5) {
     throw new RangeError("Vial count must be from 1 to 5.");
   }
-  if (typeof batchId !== "string" || !/^ARTB-\d{4}-\d{5}$/.test(batchId)) {
+  const batchNumber = typeof batchId === "string" ? Number(batchId.match(/^BAT-([1-9]\d{2,6})$/)?.[1]) : NaN;
+  if (!Number.isSafeInteger(batchNumber) || batchNumber <= BATCH_NUMBER_OFFSET) {
     throw new TypeError("A valid batch ID is required.");
   }
-  const bloodGroupCode = typeof bloodGroup === "string" ? bloodGroup.trim().toUpperCase().match(/^(AB|A|B|O)[+-]$/)?.[1] : null;
-  if (!bloodGroupCode) {
+  if (typeof bloodGroup !== "string" || !/^(AB|A|B|O)[+-]$/.test(bloodGroup.trim().toUpperCase())) {
     throw new TypeError("A valid donor blood group is required to create vial IDs.");
   }
-  return Array.from({ length: Number(count) }, (_, index) => `${batchId}-${bloodGroupCode}-V${String(index + 1).padStart(2, "0")}`);
+  const position = batchNumber - BATCH_NUMBER_OFFSET;
+  return Array.from({ length: Number(count) }, (_, index) => `V-${position}${String(index + 1).padStart(2, "0")}`);
 }
 
 module.exports = { parseCollectionDate, addCalendarMonths, nextCollectionDate, isAtOrAfterDate, isQuarantineComplete, formatBatchId, makeVialIds };

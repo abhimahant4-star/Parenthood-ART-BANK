@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, Field, Icon, LoadMore, Modal, PageTitle, usePagedList } from "@/components/ui";
+import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle, usePagedList } from "@/components/ui";
 import { apiRequest, downloadAttachment } from "@/lib/api";
 import { validUploadFile } from "@/lib/format";
 
@@ -191,15 +191,15 @@ export default function CouplesPage() {
 
   return (
     <>
-      <PageTitle title="Couple cases" subtitle="Hospital-owned cases and vial mapping" action={hospital && <button className="btn btn-primary" type="button" onClick={() => setModal({ type: "new" })}><Icon name="plus-lg" className="me-1" />New couple case</button>} />
+      <PageTitle count={list.pagination ? `${list.pagination.total} cases` : undefined} title="Couple cases" subtitle="Hospital-owned cases and vial mapping" action={hospital && <button className="btn btn-primary" type="button" onClick={() => setModal({ type: "new" })}><Icon name="plus-lg" className="me-1" />New couple case</button>} />
       <Alert message={list.error} />
       <div className="section-card">
         <DataTable headers={["Case ID", "Hospital", "Vials mapped", "Status", "Action"]} empty={list.loading ? "Loading cases…" : "No records yet"}>
           {list.records.map(couple => (
             <tr key={couple.coupleId}>
-              <td className="fw-semibold">{couple.coupleId}</td>
+              <td><IdTag value={couple.coupleId} icon="people" /></td>
               <td>{couple.hospitalId || "—"}</td>
-              <td>{(couple.mappedVialIds || []).length}</td>
+              <td>{(couple.mappedVialIds || []).length ? <div className="d-flex flex-wrap gap-1">{couple.mappedVialIds.map(vialId => <IdTag key={vialId} value={vialId} tone="slate" />)}</div> : <span className="text-secondary">None</span>}</td>
               <td><Badge status={couple.status} /></td>
               <td>
                 <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ type: "view", couple })}>Open</button>{" "}

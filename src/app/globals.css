@@ -855,3 +855,140 @@ input[type="file"].form-control::file-selector-button:hover{background:#e2ebf3}
 .vial-history-empty{display:flex;align-items:center;gap:9px;padding:15px 17px;border:1px dashed #dce5ed;border-radius:11px;background:rgba(255,255,255,.7);color:#718397;font-size:12px}
 .vial-history-empty i{color:#a4864c;font-size:14px}
 @media(max-width:575px){.vial-history-field{min-height:72px;padding:13px 14px}.vial-history-event{grid-template-columns:minmax(0,1fr);gap:8px;padding:12px 12px 12px 23px}.vial-history-event-meta{font-size:11px}}
+/* Netlify-style donor registry: pills, chips and the quick trace card. */
+.nl-table .table thead th{font-size:11px;font-weight:700;letter-spacing:.05em;color:#334155;background:#f8fafc;padding:12px 16px}
+.nl-table .table td{padding:12px 16px;font-size:13px;color:#1e293b}
+.nl-table .table tbody tr:hover>*{--bs-table-bg-state:rgba(248,250,252,.7);background-color:rgba(248,250,252,.7)}
+.nl-uhid{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:4px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;letter-spacing:.06em;white-space:nowrap}
+.nl-uhid .bi{color:#4f46e5;font-size:11px}
+.nl-donor-id{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700;color:#0f172a;white-space:nowrap}
+.nl-donor-id .bi{color:#f59e0b;font-size:11px}
+.nl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;color:#1e293b}
+.nl-mono-muted{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:#94a3b8}
+.nl-pill{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid;white-space:nowrap}
+.nl-pill .bi{font-size:11px}
+.nl-pill-married{background:#faf5ff;color:#7e22ce;border-color:#e9d5ff}
+.nl-pill-unmarried{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.nl-pill-blood{background:#fffbeb;color:#92400e;border-color:#fde68a;font-weight:700;padding:2px 8px}
+.nl-file-chip{display:inline-flex;align-items:center;gap:4px;max-width:150px;padding:4px 8px;border-radius:4px;background:#f1f5f9;color:#334155;border:1px solid #e2e8f0;font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nl-file-chip:hover{background:#e2e8f0}
+.nl-file-chip .bi{color:#dc2626}
+.nl-trace-line{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap}
+.nl-trace-line .bi{color:#6366f1}
+.nl-available{color:#047857;font-weight:600}
+.btn.nl-btn-dark{--bs-btn-bg:#0f172a;--bs-btn-color:#fbbf24;--bs-btn-border-color:#0f172a;--bs-btn-hover-bg:#1e293b;--bs-btn-hover-color:#fcd34d;--bs-btn-hover-border-color:#1e293b;--bs-btn-active-bg:#1e293b;--bs-btn-active-color:#fcd34d;--bs-btn-disabled-bg:#334155;--bs-btn-disabled-color:#fde68a;--bs-btn-disabled-border-color:#334155;background:#0f172a;color:#fbbf24;border-color:#0f172a;font-weight:600;font-size:12px;border-radius:4px;white-space:nowrap}
+.btn.nl-btn-dark:hover,.btn.nl-btn-dark:focus{background:#1e293b;color:#fcd34d}
+.btn.nl-btn-dark:disabled{background:#334155;color:#fde68a}
+.nl-table .nl-trace-line,.nl-table .nl-mono-muted{white-space:nowrap}
+.nl-trace{display:flex;gap:14px;align-items:flex-start;padding:16px 18px;border-radius:12px;border:1px solid #c7d2fe;background:linear-gradient(135deg,#eef2ff 0%,#fff 70%)}
+.nl-trace-icon{flex:none;width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:#4f46e5;color:#fff;font-size:20px}
+.nl-trace-title{font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#1e1b4b}
+.nl-trace-tag{margin-left:6px;padding:2px 8px;border-radius:999px;background:#fff;border:1px solid #c7d2fe;color:#4338ca;font-size:10px;letter-spacing:.04em}
+.nl-trace-help{font-size:12px;color:#64748b;margin-top:2px}
+.nl-trace-input{max-width:320px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}
+.nl-trace-input::placeholder{text-transform:none;font-family:var(--pb-font-ui)}
+.nl-choice{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;font-size:12px}
+.nl-choice:hover{border-color:#a5b4fc;background:#eef2ff}
+
+/* ===================================================================
+   Netlify-style theme for every page. Selectors start with .app-shell
+   so they win over Bootstrap, which loads after this file.
+   =================================================================== */
+body{background:#f8fafc}
+.app-shell{--nl-navy:#001d3d;--nl-slate-900:#0f172a;--nl-slate-700:#334155;--nl-slate-500:#64748b;--nl-slate-400:#94a3b8;--nl-slate-200:#e2e8f0;--nl-slate-100:#f1f5f9;--nl-slate-50:#f8fafc;--nl-pink:#e81b63;--nl-amber:#fbbf24;background:#f8fafc}
+
+/* Header and numbered-style tab bar */
+.app-shell .workspace-header{background:linear-gradient(90deg,#001d3d 0%,#002855 50%,#001d3d 100%);border-bottom:2px solid var(--nl-pink);box-shadow:0 4px 10px rgba(0,29,61,.18)}
+.app-shell .topbar{min-height:64px;border-bottom:1px solid rgba(255,255,255,.08)}
+.app-shell .top-nav{border-bottom:0;padding-top:6px;padding-bottom:6px;background:rgba(0,0,0,.12)}
+.app-shell .top-nav-track{gap:2px}
+.app-shell .top-nav-link{min-height:32px;padding:6px 12px;border-radius:6px;color:#e2e8f0;font-size:12px;font-weight:500;gap:6px}
+.app-shell .top-nav-link i{font-size:13px}
+.app-shell .top-nav-link:hover{background:rgba(255,255,255,.1);color:#fff}
+.app-shell .top-nav-link.active{background:var(--nl-pink);color:#fff;font-weight:700;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+
+/* Page heading card */
+.app-shell .nl-page-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;padding:20px;background:#fff;border:1px solid var(--nl-slate-200);border-radius:12px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.app-shell .nl-page-head .page-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;color:var(--nl-slate-900);font-size:22px;font-weight:800;letter-spacing:-.02em}
+.app-shell .nl-page-sub{margin-top:4px;color:var(--nl-slate-500);font-size:13px}
+.app-shell .nl-page-actions{display:flex;flex-wrap:wrap;gap:8px}
+.app-shell .nl-count{padding:2px 10px;border-radius:999px;background:var(--nl-slate-100);color:var(--nl-slate-700);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;letter-spacing:0}
+
+/* Cards */
+.app-shell .section-card,.app-shell .stat-card,.app-shell .dashboard-panel,.app-shell .dashboard-stat,.app-shell .inventory-card{border:1px solid var(--nl-slate-200);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.app-shell .section-card .card-head,.app-shell .inventory-toolbar,.app-shell .dashboard-panel-head{background:#fff;border-bottom:1px solid var(--nl-slate-200)}
+.app-shell .section-card .card-head strong,.app-shell .dashboard-panel-head h2{color:var(--nl-slate-900)}
+.app-shell .stat-card .stat-value,.app-shell .dashboard-stat strong{color:var(--nl-slate-900)}
+
+/* Buttons: dark with amber text for primary actions, white outline for secondary */
+.app-shell .btn{border-radius:8px;font-size:12px;font-weight:600}
+.app-shell .btn-primary{--bs-btn-bg:#0f172a;--bs-btn-border-color:#0f172a;--bs-btn-color:#fbbf24;--bs-btn-hover-bg:#1e293b;--bs-btn-hover-border-color:#1e293b;--bs-btn-hover-color:#fcd34d;--bs-btn-active-bg:#1e293b;--bs-btn-active-color:#fcd34d;--bs-btn-disabled-bg:#334155;--bs-btn-disabled-border-color:#334155;--bs-btn-disabled-color:#fde68a;background:#0f172a;border-color:#0f172a;color:#fbbf24}
+.app-shell .btn-primary:hover,.app-shell .btn-primary:focus{background:#1e293b;border-color:#1e293b;color:#fcd34d}
+.app-shell .btn-outline-primary{--bs-btn-color:#334155;--bs-btn-border-color:#e2e8f0;--bs-btn-hover-bg:#f1f5f9;--bs-btn-hover-color:#0f172a;--bs-btn-hover-border-color:#cbd5e1;--bs-btn-active-bg:#e2e8f0;--bs-btn-active-color:#0f172a;background:#fff;border-color:#e2e8f0;color:#334155}
+.app-shell .btn-outline-primary:hover,.app-shell .btn-outline-primary:focus{background:#f1f5f9;border-color:#cbd5e1;color:#0f172a}
+.app-shell .btn-outline-danger{border-radius:8px}
+.app-shell .btn-sm{padding:4px 12px;font-size:12px}
+.app-shell .btn.nl-btn-export{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+.app-shell .btn.nl-btn-export:hover,.app-shell .btn.nl-btn-export:focus{background:#d1fae5;border-color:#6ee7b7;color:#065f46}
+.app-shell .audit-table-card .table{table-layout:auto;min-width:1000px}
+.app-shell .audit-table-card .table th,.app-shell .audit-table-card .table td{width:auto}
+.app-shell .audit-table-card .table td{overflow-wrap:normal}
+
+/* Inputs */
+.app-shell .form-control,.app-shell .form-select{min-height:38px;border:1px solid var(--nl-slate-200);border-radius:8px;font-size:12px;color:var(--nl-slate-900)}
+.app-shell .form-select{color:var(--nl-slate-700);font-weight:500}
+.app-shell .form-control:focus,.app-shell .form-select:focus{border-color:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2)}
+.app-shell .form-label{color:var(--nl-slate-700);font-size:12px;font-weight:600}
+
+/* Tables */
+.app-shell .table{--bs-table-border-color:#e2e8f0;margin:0}
+.app-shell .table thead th{padding:12px 16px;background:#f8fafc;color:#334155;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-bottom:1px solid #e2e8f0;white-space:nowrap}
+.app-shell .table td{padding:12px 16px;color:#1e293b;font-size:12px;vertical-align:middle;border-color:#f1f5f9}
+.app-shell .table tbody tr:hover>*{--bs-table-bg-state:rgba(248,250,252,.8);background-color:rgba(248,250,252,.8)}
+.app-shell .table .empty-state{padding:28px 16px;color:var(--nl-slate-400);font-size:12px;text-align:center}
+
+/* Status badges as bordered pills with a dot */
+.app-shell .badge-soft{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border:1px solid;border-radius:999px;font-size:11px;font-weight:600;line-height:1.6;white-space:nowrap}
+.app-shell .badge-soft .badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.app-shell .badge-green{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
+.app-shell .badge-yellow{background:#fffbeb;border-color:#fde68a;color:#b45309}
+.app-shell .badge-red{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.app-shell .badge-blue{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}
+.app-shell .badge-gray{background:#f8fafc;border-color:#e2e8f0;color:#475569}
+
+/* ID chips and pills used across pages */
+.nl-id{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;font-weight:700;letter-spacing:.04em;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.nl-id .bi{font-size:11px}
+.nl-id-indigo{background:#eef2ff;border-color:#c7d2fe;color:#4338ca}
+.nl-id-slate{background:#f8fafc;border-color:#e2e8f0;color:#1e293b}
+.nl-id-amber{background:#fffbeb;border-color:#fde68a;color:#92400e}
+.nl-pill-karyotype{background:#f0fdfa;color:#0f766e;border-color:#99f6e4}
+.nl-pill-normal{background:#f8fafc;color:#475569;border-color:#e2e8f0}
+.app-shell .blood-group-pill{display:inline-flex;padding:2px 8px;border:1px solid #fde68a;border-radius:999px;background:#fffbeb;color:#92400e;font-size:11px;font-weight:700}
+
+/* Modals keep the navy header but use the lighter card colours inside */
+.app-shell #workflowModal .modal-header,.app-shell .donor-record-modal .modal-header{background:linear-gradient(90deg,#001d3d 0%,#002855 50%,#001d3d 100%);border-bottom:2px solid var(--nl-pink)}
+.app-shell #workflowModal .modal-body{background:#f8fafc}
+.app-shell #workflowModal .modal-footer .btn-primary{background:#0f172a;border-color:#0f172a;color:#fbbf24}
+
+/* Dark quick-search card, as on the Netlify donor page */
+.app-shell .nl-trace{background:linear-gradient(90deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%);border-color:rgba(55,48,163,.4);color:#fff;box-shadow:0 4px 10px rgba(15,23,42,.15)}
+.app-shell .nl-trace-icon{background:rgba(99,102,241,.25);color:#fbbf24}
+.app-shell .nl-trace-title{color:#fbbf24}
+.app-shell .nl-trace-tag{background:#4338ca;border-color:#6366f1;color:#e0e7ff}
+.app-shell .nl-trace-help{color:#cbd5e1}
+.app-shell .nl-trace-input{background:rgba(2,6,23,.8);border-color:rgba(99,102,241,.5);color:#fcd34d;letter-spacing:.15em}
+.app-shell .nl-trace-input::placeholder{color:#64748b;letter-spacing:normal}
+.app-shell .nl-trace .text-danger{color:#fca5a5!important}
+.app-shell .nl-trace .text-secondary{color:#cbd5e1!important}
+
+.app-shell a:not(.btn-link){text-decoration:none}
+.nl-pill-role{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
+.nl-pill-action{background:#f8fafc;color:#0f172a;border-color:#e2e8f0;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:700}
+.nl-blood-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px;padding:16px}
+.nl-blood-tile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;opacity:.6}
+.nl-blood-tile.has-stock{background:#fff;opacity:1;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+.nl-blood-tile strong{font-size:20px;color:#0f172a;line-height:1}
+.nl-blood-tile small{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:#64748b}
+@media(max-width:900px){.nl-blood-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:700px){.app-shell .nl-page-head{padding:16px}.app-shell .nl-page-head .page-title{font-size:19px}.app-shell .table td,.app-shell .table thead th{padding:10px 12px}}

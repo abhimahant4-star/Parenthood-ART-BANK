@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Alert, Badge, DataTable, Field, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
+import { Alert, Badge, DataTable, Field, IdTag, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest } from "@/lib/api";
+import { roleLabel } from "@/lib/format";
 
 const CREATE_ROLES = ["SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF", "CHAIN_CEO"];
 
@@ -159,7 +160,7 @@ export default function UsersPage() {
 
   return (
     <>
-      <PageTitle title="User management" subtitle="Create accounts with explicit hospital and centre assignments" action={<div>
+      <PageTitle count={list.pagination ? `${list.pagination.total} users` : undefined} title="User management" subtitle="Create accounts with explicit hospital and centre assignments" action={<div>
         <button className="btn btn-outline-primary me-2" type="button" onClick={registerHospital}>Register hospital</button>
         <button className="btn btn-primary" type="button" onClick={() => setModal({ type: "user" })}>Create user</button>
       </div>} />
@@ -168,10 +169,10 @@ export default function UsersPage() {
         <DataTable headers={["Name", "Username", "Role", "Data scope", "Status", "Action"]} empty={list.loading ? "Loading users…" : "No records yet"}>
           {list.records.map(account => (
             <tr key={account._id}>
-              <td>{account.name || ""}</td>
-              <td>{account.username}</td>
-              <td>{account.role}</td>
-              <td>{account.hospitalId ? `${account.hospitalId} / ${account.centreId || "Unassigned"}` : account.chainId || "Global"}</td>
+              <td className="fw-semibold">{account.name || ""}</td>
+              <td><IdTag value={account.username} icon="person" tone="slate" /></td>
+              <td><span className="nl-pill nl-pill-role">{roleLabel(account.role)}</span></td>
+              <td>{account.hospitalId ? <span className="nl-mono">{account.hospitalId} / {account.centreId || "Unassigned"}</span> : <span className="text-secondary">{account.chainId || "Global"}</span>}</td>
               <td><Badge status={account.active ? "ACTIVE" : "INACTIVE"} /></td>
               <td className="d-flex gap-2">
                 {account.role === "HOSPITAL_USER" && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ type: "user", existing: account })}>Edit scope</button>}

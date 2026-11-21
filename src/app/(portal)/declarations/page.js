@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { AttachmentSlots, addSlot, newSlots } from "@/components/AttachmentSlots";
 import { DeclarationPreviewModal } from "@/components/DeclarationPaper";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, Field, Icon, LoadErrors, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
+import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadErrors, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest, loadAll } from "@/lib/api";
 import { canOperateBank, localDateTime, todayIso, validUploadFile } from "@/lib/format";
 
@@ -295,7 +295,7 @@ export default function DeclarationsPage() {
 
   return (
     <>
-      <PageTitle title={hospital ? "Submitted declarations" : "Declarations"} subtitle={hospital ? "Only declarations submitted to your centre are visible" : "Fixed-format declarations, preview and version history"} action={bank && (
+      <PageTitle count={list.pagination ? `${list.pagination.total} issued` : undefined} title={hospital ? "Submitted declarations" : "Statutory ART Declarations"} subtitle={hospital ? "Only declarations submitted to your centre are visible" : "Fixed-format declarations, preview and version history"} action={bank && (
         <button className="btn btn-primary" type="button" disabled={unavailable} title={unavailable ? "Retry loading declaration data before creating a declaration" : undefined} onClick={startNew}><Icon name="plus-lg" className="me-1" />Create declaration</button>
       )} />
       <Alert message={message?.text} type={message?.type} onClose={() => setMessage(null)} />
@@ -316,11 +316,11 @@ export default function DeclarationsPage() {
             ];
             return (
               <tr key={declaration.declarationId}>
-                <td>{declaration.declarationId}</td>
-                <td>{data.donorNumber || data.donorUhid || data.donor || ""}</td>
+                <td><IdTag value={declaration.declarationId} icon="file-earmark-text" /></td>
+                <td>{(data.donorNumber || data.donorUhid || data.donor) ? <span className="nl-donor-id"><Icon name="lock-fill" />{data.donorNumber || data.donorUhid || data.donor}</span> : "—"}</td>
                 <td>{declaration.hospitalId}</td>
-                <td>{(declaration.vialIds || data.vials || []).join(", ")}</td>
-                <td>v{declaration.currentVersion || 1}</td>
+                <td><div className="d-flex flex-wrap gap-1">{(declaration.vialIds || data.vials || []).map(vialId => <IdTag key={vialId} value={vialId} tone="slate" />)}</div></td>
+                <td><span className="nl-count">v{declaration.currentVersion || 1}</span></td>
                 <td><Badge status={declaration.status} /></td>
                 <td>
                   <select className="form-select form-select-sm declaration-action-select" aria-label={`Actions for declaration ${declaration.declarationId}`} value="" onChange={event => runAction(event.target.value, declaration)}>
@@ -343,7 +343,7 @@ export default function DeclarationsPage() {
               const declaration = list.records.find(item => item.declarationId === request.declarationId);
               return (
                 <tr key={request.requestId}>
-                  <td>{request.declarationId}</td>
+                  <td><IdTag value={request.declarationId} icon="file-earmark-text" /></td>
                   <td>{request.requestedBy}</td>
                   <td>{localDateTime(request.requestedAt)}</td>
                   <td>{request.reason}</td>

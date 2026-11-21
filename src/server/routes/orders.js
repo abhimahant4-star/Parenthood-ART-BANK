@@ -97,7 +97,7 @@ router.post(
         return res.status(403).json({ success: false, message: "Hospital users cannot select ART Bank donors for stock requests", errorCode: "DONOR_SELECTION_DENIED" });
       }
       if (donorId) {
-        const donor = await Donor.findOne({ donorId, status: { $ne: "Inactive" } }).select("donorId").lean();
+        const donor = await Donor.findOne({ donorId, status: { $nin: ["Inactive", "Retired"] } }).select("donorId").lean();
         if (!donor) return res.status(400).json({ success: false, message: "Select an active donor", errorCode: "INVALID_STOCK_DONOR" });
         const now = new Date();
         for (const item of items) {

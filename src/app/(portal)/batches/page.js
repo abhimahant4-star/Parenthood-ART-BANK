@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, Field, Icon, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
+import { Alert, Badge, BloodPill, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle, StockPill, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest } from "@/lib/api";
 import { canOperateBank, canReleaseBatch, localDate, subtractSixMonthsFromDate, todayIso } from "@/lib/format";
 
@@ -173,7 +173,7 @@ export default function BatchesPage() {
 
   return (
     <>
-      <PageTitle title="Collections / Batches" subtitle="Collection date and six-month quarantine" action={canOperateBank(user) && <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}><Icon name="plus-lg" className="me-1" />Create batch</button>} />
+      <PageTitle title="Collections / Batches" count={list.summary?.total !== undefined ? `${list.summary.total} batches` : undefined} subtitle="Collection batches, Karyotype tested vs normal stock, and the six-month quarantine" action={canOperateBank(user) && <button className="btn btn-primary" type="button" onClick={() => setCreating(true)}><Icon name="plus-lg" className="me-1" />Create batch</button>} />
       <Alert message={message?.text} type={message?.type} onClose={() => setMessage(null)} />
       <Alert message={list.error} />
       <div className="section-card">
@@ -186,21 +186,27 @@ export default function BatchesPage() {
             <button className="btn btn-outline-secondary" type="button" onClick={() => { setQ(""); setStatus(""); }}>Clear filters</button>
           </div>
         </div>
-        <DataTable headers={["Batch ID", "Donor UHID", "Collection date", "Vials", "Quarantine ends", "Status", "Action"]} empty={list.loading ? "Loading batches…" : "No records yet"}>
+        <DataTable headers={["Batch ID", "Donor", "Blood group", "Stock type", "Collection date", "Vials", "Quarantine ends", "Status", "Action"]} empty={list.loading ? "Loading batches…" : "No records yet"}>
           {list.records.map(batch => {
             const donorId = batch.donor?.donorId;
             const donor = donorFor(donorId);
             const released = ["RELEASED", "AVAILABLE_AT_ART_BANK"].includes(batch.releaseStatus);
             const eligible = Boolean(batch.quarantineEnd) && new Date(batch.quarantineEnd) <= new Date();
+            const daysLeft = batch.quarantineEnd ? Math.ceil((new Date(batch.quarantineEnd) - Date.now()) / 86400000) : null;
             return (
               <tr key={batch.batchId}>
-                <td><BatchId id={batch.batchId} /></td>
-                <td><div className="batch-donor-cell"><span className="donor-uhid">{donor?.uhid || donorId || "—"}</span><span className="batch-donor-name">{donor?.name || "—"}</span></div></td>
+                <td>{String(batch.batchId).length > 22 ? <BatchId id={batch.batchId} /> : <IdTag value={batch.batchId} icon="layers" />}</td>
+                <td>
+                  <div className="d-flex align-items-center gap-2 flex-wrap"><IdTag value={donor?.uhid || donorId} icon="fingerprint" tone="slate" />{donor?.manualDonorId && <span className="nl-donor-id"><Icon name="lock-fill" />{donor.manualDonorId}</span>}</div>
+                  <div className="nl-mono-muted mt-1">{donor?.name || ""}</div>
+                </td>
+                <td><BloodPill value={batch.bloodGroup || donor?.bloodGroup} /></td>
+                <td><StockPill value={batch.stockClassification} /></td>
                 <td>{localDate(batch.collectionAt)}</td>
-                <td>{batch.vialCount}</td>
-                <td>{localDate(batch.quarantineEnd)}</td>
+                <td><span className="nl-mono">{batch.vialCount}</span></td>
+                <td>{localDate(batch.quarantineEnd)}{!released && daysLeft !== null && <div className="nl-mono-muted">{daysLeft > 0 ? `${daysLeft} days left` : "Ready to release"}</div>}</td>
                 <td><Badge status={batch.releaseStatus} /></td>
-                <td>{canReleaseBatch(user) && !released && <button className="btn btn-sm btn-outline-primary" type="button" title={eligible ? "Release batch" : "Click to see why release is unavailable"} onClick={() => release(batch)}>Release</button>}</td>
+                <td>{canReleaseBatch(user) && !released && <button className={`btn btn-sm ${eligible ? "btn-primary" : "btn-outline-primary"}`} type="button" title={eligible ? "Release batch" : "Click to see why release is unavailable"} onClick={() => release(batch)}>Release</button>}</td>
               </tr>
             );
           })}

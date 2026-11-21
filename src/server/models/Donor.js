@@ -18,6 +18,11 @@ const schema=new mongoose.Schema({
   hairColour:String,
   build:String,
   status:{type:String,default:"Active"},
+  // Statutory screening results recorded by ART Bank staff.
+  screening:{
+    hiv:String, hbsag:String, hcv:String, vdrl:String, thalassemia:String, karyotype:String,
+    testedOn:Date, updatedBy:String, updatedAt:Date
+  },
   consent:mongoose.Schema.Types.Mixed,
   operationalInfo:mongoose.Schema.Types.Mixed
 },{timestamps:true});

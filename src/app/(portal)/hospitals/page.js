@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, PageTitle, useLoader } from "@/components/ui";
+import { Alert, Badge, DataTable, IdTag, PageTitle, useLoader } from "@/components/ui";
 import { apiRequest } from "@/lib/api";
 
 export default function HospitalsPage() {
@@ -20,10 +20,10 @@ export default function HospitalsPage() {
         <DataTable headers={["Hospital ID", "Hospital", "Chain ID", "Centre", "Status"]} empty={loading ? "Loading hospitals…" : "No records yet"}>
           {rows.map(row => (
             <tr key={`${row.id}|${row.centreId}`}>
-              <td><span className="hospital-id-chip">{row.id}</span></td>
-              <td>{row.name}</td>
-              <td>—</td>
-              <td><div className="hospital-centre-cell"><span className="hospital-centre-name">{row.centreName}</span><span className="hospital-centre-id">Centre ID · {row.centreId}</span></div></td>
+              <td><IdTag value={row.id} icon="hospital" /></td>
+              <td className="fw-semibold">{row.name}</td>
+              <td className="text-secondary">—</td>
+              <td><div className="fw-semibold">{row.centreName}</div><div className="nl-mono-muted">Centre ID · {row.centreId}</div></td>
               <td><Badge status="Active" /></td>
             </tr>
           ))}

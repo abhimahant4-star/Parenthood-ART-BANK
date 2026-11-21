@@ -7,6 +7,7 @@ const {withTransaction,RouteError,sendRouteError}=require("../services/transacti
 const {recordOperationalEvent}=require("../services/operationalAuditService");
 const {minimizeHospitalVial}=require("../services/hospitalDataPrivacy");
 const {getLinkedHospitalScopes,withLinkedHospitalScope}=require("../services/linkedHospitalScopeService");
+const {flexibleIdPattern,containsPattern}=require("../utils/flexibleSearch");
 const escapeRegex=value=>String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 
 router.get("/",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_STAFF","HOSPITAL_USER","CHAIN_CEO"),asyncHandler(async(req,res)=>{
@@ -28,12 +29,13 @@ router.get("/",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_S
   if(req.query.location) filter.currentLocation=String(req.query.location).slice(0,160);
   const search=String(req.query.q||"").trim().slice(0,100);
   if(search) {
-    const pattern=new RegExp(escapeRegex(search),"i");
+    const pattern=flexibleIdPattern(search);
+    const textPattern=containsPattern(search);
     const or=["HOSPITAL_USER","CHAIN_CEO"].includes(req.user.role)
-      ? [{vialId:pattern},{currentLocation:pattern}]
-      : [{vialId:pattern},{batchId:pattern},{donorId:pattern},{currentLocation:pattern}];
+      ? [{vialId:pattern},{currentLocation:textPattern}]
+      : [{vialId:pattern},{batchId:pattern},{donorId:pattern},{currentLocation:textPattern}];
     if(["SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_STAFF"].includes(req.user.role)) {
-      const matchingDonors=await Donor.find({uhid:pattern}).select("donorId").lean();
+      const matchingDonors=await Donor.find({$or:[{uhid:pattern},{manualDonorId:pattern}]}).select("donorId").limit(500).lean();
       if(matchingDonors.length) or.push({donorId:{$in:matchingDonors.map(donor=>donor.donorId)}});
     }
     filter.$or=or;

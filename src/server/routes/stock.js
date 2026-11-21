@@ -19,7 +19,16 @@ router.get("/", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BA
       { $sort: { _id: 1 } }
     ]);
     const total = groups.reduce((sum, item) => sum + item.count, 0);
-    return res.json({ success: true, data: { total, byStatus: groups.map(item => ({ status: item._id, count: item.count })) } });
+    const data = { total, byStatus: groups.map(item => ({ status: item._id, count: item.count })) };
+    // ART Bank roles also see released stock ready for dispatch, by blood group and stock type.
+    if (["SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"].includes(req.user.role)) {
+      const ready = await Vial.aggregate([
+        { $match: { status: "AVAILABLE_AT_ART_BANK", quarantineEnd: { $lte: new Date() } } },
+        { $group: { _id: { bloodGroup: "$bloodGroup", stock: "$stockClassification" }, count: { $sum: 1 } } }
+      ]);
+      data.readyForDispatch = ready.map(item => ({ bloodGroup: item._id.bloodGroup || "", stockClassification: item._id.stock || "", count: item.count }));
+    }
+    return res.json({ success: true, data });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, message: "Failed to fetch stock summary", errorCode: "STOCK_FETCH_ERROR" });

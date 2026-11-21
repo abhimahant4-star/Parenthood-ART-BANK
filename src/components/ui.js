@@ -7,31 +7,49 @@ export function Icon({ name, className = "" }) {
   return <i className={`bi bi-${name} ${className}`.trim()} aria-hidden="true" />;
 }
 
-export function Badge({ status }) {
-  const value = String(status || "").toUpperCase();
-  let tone = "badge-gray";
-  if (["RELEASED", "AVAILABLE_AT_ART_BANK", "SUBMITTED", "MAPPED_USED", "ACTIVE"].includes(value)) tone = "badge-green";
-  else if (["QUARANTINED", "PENDING", "DRAFT", "UNSUBMITTED", "UNUSED_AT_HOSPITAL"].includes(value)) tone = "badge-yellow";
-  else if (["BLOCKED", "RECALLED", "EXPIRED", "DISCARDED"].includes(value)) tone = "badge-red";
-  else if (value === "DISPATCHED") tone = "badge-blue";
-  return <span className={`badge-soft ${tone}`}>{status}</span>;
+// Turns stored codes such as AVAILABLE_AT_ART_BANK into "Available at ART Bank".
+export function statusLabel(status) {
+  const text = String(status ?? "");
+  if (!/[_A-Z]{3,}/.test(text) || /[a-z]/.test(text)) return text;
+  return text.replaceAll("_", " ").toLowerCase().replace(/^./, letter => letter.toUpperCase()).replace(/\bart\b/g, "ART").replace(/\bceo\b/g, "CEO");
 }
 
-export function PageTitle({ title, subtitle, action }) {
+export function Badge({ status, label }) {
+  const value = String(status || "").toUpperCase();
+  let tone = "badge-gray";
+  if (["RELEASED", "AVAILABLE_AT_ART_BANK", "SUBMITTED", "APPROVED", "MAPPED_USED", "ACTIVE", "RECEIVED", "DELIVERED", "COMPLETED", "NON_REACTIVE", "NORMAL"].includes(value)) tone = "badge-green";
+  else if (["QUARANTINED", "PENDING", "DRAFT", "UNSUBMITTED", "UNUSED_AT_HOSPITAL", "REQUESTED", "CORRECTION_REQUESTED", "INACTIVE"].includes(value)) tone = "badge-yellow";
+  else if (["BLOCKED", "RECALLED", "EXPIRED", "DISCARDED", "REJECTED", "CANCELLED", "REACTIVE", "ABNORMAL"].includes(value)) tone = "badge-red";
+  else if (["DISPATCHED", "IN_TRANSIT", "CREATED"].includes(value)) tone = "badge-blue";
+  return <span className={`badge-soft ${tone}`}><span className="badge-dot" aria-hidden="true" />{label ?? statusLabel(status)}</span>;
+}
+
+// Monospace ID chip in the Netlify style. Tones: indigo (primary IDs), slate (references), amber (locked/manual IDs).
+export function IdTag({ value, icon, tone = "indigo", title }) {
+  if (!value) return <span className="text-secondary">—</span>;
+  return <span className={`nl-id nl-id-${tone}`} title={title || String(value)}>{icon && <Icon name={icon} />}{value}</span>;
+}
+
+export function BloodPill({ value }) {
+  const group = String(value || "").trim().toUpperCase();
+  return group ? <span className="nl-pill nl-pill-blood">{group}</span> : <span className="text-secondary">—</span>;
+}
+
+export function StockPill({ value }) {
+  if (value === "KARYOTYPE_TESTED") return <span className="nl-pill nl-pill-karyotype"><span aria-hidden="true">🧬</span>Karyotype tested</span>;
+  if (value === "NORMAL_STOCK") return <span className="nl-pill nl-pill-normal">Normal stock</span>;
+  return <span className="text-secondary">Not specified</span>;
+}
+
+export function PageTitle({ title, subtitle, action, count }) {
   return (
-    <>
-      <div className="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
-        <div>
-          <h1 className="page-title">{title}</h1>
-          <div className="muted">{subtitle}</div>
-        </div>
-        {action}
+    <div className="nl-page-head">
+      <div className="nl-page-head-copy">
+        <h1 className="page-title">{title}{count !== undefined && count !== null && <span className="nl-count">{count}</span>}</h1>
+        {subtitle && <div className="nl-page-sub">{subtitle}</div>}
       </div>
-      <div className="demo-notice">
-        <Icon name="shield-lock" className="me-2" />
-        Connected workspace · records are saved through the authenticated backend API
-      </div>
-    </>
+      {action && <div className="nl-page-actions">{action}</div>}
+    </div>
   );
 }
 

@@ -8,6 +8,7 @@ out/
 .env.local
 .env.production
 .env.*.local
+.vercel/
 
 # Private data
 .local-mongodb/
@@ -18,3 +19,6 @@ certs/
 
 # Logs
 *.log
+
+.vercel
+.env*

@@ -15,6 +15,8 @@ const { stockCsvStream } = require("../services/stockCsvService");
 const { couplePatientCsvStream } = require("../services/couplePatientCsvService");
 const { orderCsvStream } = require("../services/orderCsvService");
 const { getLinkedHospitalScopes, withLinkedHospitalScope } = require("../services/linkedHospitalScopeService");
+const { csvFromRecords } = require("../services/csvService");
+const { withTraceSummary, donorListFilter, BLOOD_GROUPS } = require("../services/donorTraceService");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 
@@ -824,4 +826,99 @@ router.get(
     }
   }
 );
+
+// ======================================================
+// ART Bank register exports: donor registry, quarantine ledger and utilization.
+// ======================================================
+
+const BANK_ROLES = ["SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"];
+const EXPORT_ROW_LIMIT = 20000;
+const dateOnly = value => (value ? new Date(value).toISOString().slice(0, 10) : "");
+const stockLabel = value => (value === "KARYOTYPE_TESTED" ? "Karyotype tested" : value === "NORMAL_STOCK" ? "Normal stock" : "");
+const resultLabel = value => (value ? value.replaceAll("_", " ").toLowerCase().replace(/^./, letter => letter.toUpperCase()) : "Not recorded");
+const bloodGroupFilter = query => (BLOOD_GROUPS.includes(query.bloodGroup) ? { bloodGroup: query.bloodGroup } : {});
+
+function sendCsv(res, filename, rows, headers) {
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  return res.send(csvFromRecords(rows, headers));
+}
+
+async function donorLookup(donorIds) {
+  const donors = await Donor.find({ donorId: { $in: [...new Set(donorIds.filter(Boolean))] } }).select("donorId uhid manualDonorId").lean();
+  return new Map(donors.map(donor => [donor.donorId, donor]));
+}
+
+function registerExport(path, entity, errorCode, build) {
+  router.get(path, requireAuth, allowRoles(...BANK_ROLES), async (req, res) => {
+    try {
+      const { filename, rows, headers } = await build(req);
+      await recordExport(req, "CSV", entity);
+      return sendCsv(res, filename, rows, headers);
+    } catch (error) {
+      console.error(error);
+      return res.status(error.status || 500).json({ success: false, message: publicErrorMessage(error, "Failed to export report"), errorCode });
+    }
+  });
+}
+
+registerExport("/donors.csv", "DONOR_REGISTRY_REPORT", "DONOR_EXPORT_ERROR", async req => {
+  const donors = await Donor.find(donorListFilter(req.query)).select("-aadhaarHash").sort({ createdAt: -1 }).limit(EXPORT_ROW_LIMIT).lean();
+  const today = new Date();
+  const rows = (await withTraceSummary(donors)).map(donor => {
+    const dob = donor.dob ? new Date(donor.dob) : null;
+    let age = "";
+    if (dob) {
+      age = today.getUTCFullYear() - dob.getUTCFullYear();
+      if (today.getUTCMonth() < dob.getUTCMonth() || (today.getUTCMonth() === dob.getUTCMonth() && today.getUTCDate() < dob.getUTCDate())) age -= 1;
+    }
+    const screening = donor.screening || {};
+    return {
+      "UHID": donor.uhid || donor.donorId, "Manual donor ID": donor.manualDonorId, "Legal name": donor.name,
+      "Date of birth": dateOnly(donor.dob), "Age": age, "Marital status": donor.maritalStatus, "Blood group": donor.bloodGroup,
+      "Status": donor.status || "Active", "Aadhaar (masked)": donor.aadhaarMasked,
+      "Height": donor.height, "Complexion": donor.complexion, "Eye colour": donor.eyeColour, "Hair colour": donor.hairColour, "Build": donor.build,
+      "Batches": donor.trace.batchIds.join(" "), "Vials available": donor.trace.vialAvailable, "Vials total": donor.trace.vialTotal,
+      "HIV 1 & 2": resultLabel(screening.hiv), "HBsAg": resultLabel(screening.hbsag), "HCV": resultLabel(screening.hcv),
+      "VDRL": resultLabel(screening.vdrl), "Thalassemia": resultLabel(screening.thalassemia), "Karyotype": resultLabel(screening.karyotype),
+      "Screening date": dateOnly(screening.testedOn), "Registered": dateOnly(donor.createdAt)
+    };
+  });
+  return { filename: "donor-registry.csv", rows, headers: Object.keys(rows[0] || { "UHID": "" }) };
+});
+
+registerExport("/quarantine.csv", "QUARANTINE_LEDGER_REPORT", "QUARANTINE_EXPORT_ERROR", async req => {
+  const batches = await Batch.find(bloodGroupFilter(req.query)).sort({ collectionAt: -1 }).limit(EXPORT_ROW_LIMIT).lean();
+  const donors = await donorLookup(batches.map(batch => batch.donor?.donorId));
+  const now = Date.now();
+  const headers = ["Batch ID", "UHID", "Manual donor ID", "Blood group", "Stock type", "Vials", "Collection date", "Quarantine start", "Quarantine end", "Days remaining", "Release status", "Approved by"];
+  const rows = batches.map(batch => {
+    const donor = donors.get(batch.donor?.donorId) || {};
+    const end = batch.quarantineEnd ? new Date(batch.quarantineEnd).getTime() : null;
+    return {
+      "Batch ID": batch.batchId, "UHID": donor.uhid || batch.donor?.donorId, "Manual donor ID": donor.manualDonorId,
+      "Blood group": batch.bloodGroup, "Stock type": stockLabel(batch.stockClassification), "Vials": batch.vialCount,
+      "Collection date": dateOnly(batch.collectionAt), "Quarantine start": dateOnly(batch.quarantineStart), "Quarantine end": dateOnly(batch.quarantineEnd),
+      "Days remaining": end === null ? "" : Math.max(0, Math.ceil((end - now) / 86400000)), "Release status": batch.releaseStatus, "Approved by": batch.approvedBy
+    };
+  });
+  return { filename: "quarantine-ledger.csv", rows, headers };
+});
+
+registerExport("/utilization.csv", "UTILIZATION_REPORT", "UTILIZATION_EXPORT_ERROR", async req => {
+  const vials = await Vial.find({ status: "MAPPED_USED", ...bloodGroupFilter(req.query) }).sort({ updatedAt: -1 }).limit(EXPORT_ROW_LIMIT).lean();
+  const donors = await donorLookup(vials.map(vial => vial.donorId));
+  const headers = ["Vial ID", "UHID", "Manual donor ID", "Batch ID", "Blood group", "Stock type", "Hospital", "Centre", "Couple case", "Mapped on", "Mapped by"];
+  const rows = vials.map(vial => {
+    const donor = donors.get(vial.donorId) || {};
+    const mapped = [...(vial.statusHistory || [])].reverse().find(entry => entry?.status === "MAPPED_USED") || {};
+    return {
+      "Vial ID": vial.vialId, "UHID": donor.uhid || vial.donorId, "Manual donor ID": donor.manualDonorId, "Batch ID": vial.batchId,
+      "Blood group": vial.bloodGroup, "Stock type": stockLabel(vial.stockClassification), "Hospital": vial.hospitalId, "Centre": vial.centreId,
+      "Couple case": mapped.coupleId, "Mapped on": dateOnly(mapped.at), "Mapped by": mapped.by
+    };
+  });
+  return { filename: "utilization-mapping.csv", rows, headers };
+});
+
 module.exports = router;

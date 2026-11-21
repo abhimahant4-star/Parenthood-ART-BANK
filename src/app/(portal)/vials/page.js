@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, Icon, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
+import { Alert, Badge, BloodPill, DataTable, Icon, IdTag, Modal, PageTitle, StockPill, statusLabel, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest, loadAll } from "@/lib/api";
 import { BLOOD_GROUPS, normalizeBloodGroup } from "@/lib/format";
 
@@ -102,7 +102,7 @@ export default function VialsPage() {
 
   return (
     <>
-      <PageTitle title={isHospital ? "My Stock" : ceo ? "Linked hospital stock" : "Vial inventory"} subtitle={isHospital ? "Vial inventory in your hospital scope" : ceo ? "Operational vial records for linked hospital accounts" : "Individual vial records, classification and movement history"} />
+      <PageTitle count={`${inventoryTotal} vials tracked`} title={isHospital ? "My Stock" : ceo ? "Linked hospital stock" : "Vial inventory"} subtitle={isHospital ? "Vial inventory in your hospital scope" : ceo ? "Operational vial records for linked hospital accounts" : "Individual vial records, classification and movement history"} />
       <Alert message={message || list.error} />
       <div className="row g-3 mb-4">
         {stats.map(([label, value]) => <div className={`col-6 col-xl-${isHospital ? 4 : 3}`} key={label}><div className="stat-card compact-stat"><div className="stat-label">{label}</div><div className="stat-value">{value}</div></div></div>)}
@@ -116,7 +116,7 @@ export default function VialsPage() {
           <div className="inventory-filters">
             <label className="inventory-search"><Icon name="search" /><input type="search" className="form-control" placeholder={isHospital || ceo ? "Search vial or location" : "Search vial, donor UHID, batch or location"} aria-label="Search vial inventory" value={filters.q} onChange={setFilter("q")} /></label>
             <select className="form-select" aria-label="Filter by status" value={filters.status} onChange={setFilter("status")}>
-              <option value="">All statuses</option>{statuses.map(status => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}
+              <option value="">All statuses</option>{statuses.map(status => <option key={status} value={status}>{statusLabel(status)}</option>)}
             </select>
             <select className="form-select" aria-label="Filter by blood group" value={filters.bloodGroup} onChange={setFilter("bloodGroup")}>
               <option value="">All blood groups</option>{BLOOD_GROUPS.map(group => <option key={group} value={group}>{group}</option>)}
@@ -135,15 +135,16 @@ export default function VialsPage() {
         <div className="inventory-table-wrap">
           <DataTable headers={columns} empty={list.loading ? "Loading vials…" : "No vials match these filters."}>
             {list.records.map(vial => {
-              const blood = <span className="blood-group-pill">{normalizeBloodGroup(vial.bloodGroup) || "—"}</span>;
-              const id = <CompactId value={vial.vialId} kind="vial" />;
+              const blood = <BloodPill value={normalizeBloodGroup(vial.bloodGroup)} />;
+              const id = String(vial.vialId).length > 24 ? <CompactId value={vial.vialId} kind="vial" /> : <IdTag value={vial.vialId} icon="droplet-half" />;
+              const stockType = <StockPill value={vial.stockClassification} />;
               if (isHospital) return <tr key={vial.vialId}><td>{id}</td><td>{blood}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td></tr>;
-              if (ceo) return <tr key={vial.vialId}><td>{id}</td><td>{hospitalName(vial.hospitalId)}</td><td>{vial.centreId || "—"}</td><td>{blood}</td><td>{stockTypeLabel(vial.stockClassification)}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td></tr>;
+              if (ceo) return <tr key={vial.vialId}><td>{id}</td><td>{hospitalName(vial.hospitalId)}</td><td>{vial.centreId || "—"}</td><td>{blood}</td><td>{stockType}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td></tr>;
               const targets = ["QUARANTINED", "RELEASED", "AVAILABLE_AT_ART_BANK", "DISPATCHED", "UNUSED_AT_HOSPITAL"].includes(vial.status) ? ["BLOCKED", "RECALLED"] : vial.status === "BLOCKED" ? ["RECALLED"] : [];
               return (
                 <tr key={vial.vialId}>
-                  <td>{id}</td><td>{vial.donorUhid || vial.donorId || "—"}</td><td><CompactId value={vial.batchId} kind="batch" /></td><td>{blood}</td>
-                  <td>{stockTypeLabel(vial.stockClassification)}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td>
+                  <td>{id}</td><td><IdTag value={vial.donorUhid || vial.donorId} icon="fingerprint" /></td><td>{String(vial.batchId).length > 24 ? <CompactId value={vial.batchId} kind="batch" /> : <IdTag value={vial.batchId} icon="layers" tone="slate" />}</td><td>{blood}</td>
+                  <td>{stockType}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td>
                   <td>
                     <div className="inventory-actions">
                       <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => openHistory(vial.vialId)}><Icon name="clock-history" className="me-1" />History</button>

@@ -419,9 +419,9 @@ test("batch creation commits batch and numbered vial IDs beginning at 3", async 
   assert.equal(response.status, 201);
   assert.equal(response.body.success, true);
   assert.equal(response.body.data.vials.length, 3);
-  assert.match(response.body.data.batch.batchId, /^ARTB-\d{4}-\d{5}$/);
-  const bloodGroupCode = response.body.data.batch.bloodGroup.replace(/[+-]/g, "");
-  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["V01", "V02", "V03"].map(suffix => `${response.body.data.batch.batchId}-${bloodGroupCode}-${suffix}`));
+  assert.match(response.body.data.batch.batchId, /^BAT-\d{3,7}$/);
+  const position = Number(response.body.data.batch.batchId.slice(4)) - 100;
+  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["01", "02", "03"].map(suffix => `V-${position}${suffix}`));
   assert.ok(response.body.data.vials.every(vial => vial.bloodGroup === "O+" && vial.stockClassification === "KARYOTYPE_TESTED"));
   assert.equal(await Vial.countDocuments({ batchId: response.body.data.batch.batchId }), 3);
 });
@@ -487,8 +487,8 @@ test("batch collection allows the six-month boundary and persists the donor bloo
   }
   assert.equal(response.status, 201);
   assert.equal(response.body.data.batch.bloodGroup, "O+");
-  const bloodGroupCode = response.body.data.batch.bloodGroup.replace(/[+-]/g, "");
-  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["V01", "V02", "V03", "V04", "V05"].map(suffix => `${response.body.data.batch.batchId}-${bloodGroupCode}-${suffix}`));
+  const position = Number(response.body.data.batch.batchId.slice(4)) - 100;
+  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["01", "02", "03", "04", "05"].map(suffix => `V-${position}${suffix}`));
   assert.equal(new Date(response.body.data.batch.quarantineEnd).toISOString().slice(0, 10), addCalendarMonths(today, 6).toISOString().slice(0, 10));
   assert.equal((await Donor.findById(donor._id)).lastCollectionAt.toISOString().slice(0, 10), today.toISOString().slice(0, 10));
 });
@@ -580,9 +580,14 @@ test("batch search and status filters paginate the full matching result set", as
   assert.equal(released.body.pagination.total, 1);
   assert.equal(released.body.data[0].batchId, batchIds[1]);
 
+  // Symbols are ignored when matching IDs, and regex characters are never interpreted.
   const metacharacterSearch = await request(`/api/batches?q=${encodeURIComponent(`${donorId}.*`)}`, bankToken);
   assert.equal(metacharacterSearch.status, 200);
-  assert.equal(metacharacterSearch.body.pagination.total, 0);
+  assert.equal(metacharacterSearch.body.pagination.total, 2);
+  const compactSearch = await request(`/api/batches?q=${encodeURIComponent(donorId.replace(/-/g, ""))}`, bankToken);
+  assert.equal(compactSearch.body.pagination.total, 2);
+  const bracketSearch = await request(`/api/batches?q=${encodeURIComponent("([")}`, bankToken);
+  assert.equal(bracketSearch.status, 200);
 
   const donor = await createDonor();
   const legacyBatchId = `TEST-BATCH-UNIT-SEARCH-${runId}`;

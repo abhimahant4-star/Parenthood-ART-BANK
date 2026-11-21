@@ -12,6 +12,39 @@ const compactDispatchId = value => {
 };
 const courierReference = order => (typeof order.courierDetails === "string" ? order.courierDetails : order.courierDetails?.reference || order.courierDetails?.trackingNumber || order.courierDetails?.courier || "");
 
+// Released vials ready for dispatch, by blood group, split into karyotype-tested (KT) and normal stock.
+function ReadyStockSummary() {
+  const stock = useLoader(async () => (await apiRequest("/stock")).data, []);
+  const ready = stock.data?.readyForDispatch || [];
+  const sum = rows => rows.reduce((total, row) => total + row.count, 0);
+  const forGroup = group => ready.filter(row => normalizeBloodGroup(row.bloodGroup) === group);
+  const karyotype = sum(ready.filter(row => row.stockClassification === "KARYOTYPE_TESTED"));
+  const normal = sum(ready.filter(row => row.stockClassification === "NORMAL_STOCK"));
+  if (stock.error) return <Alert message={`Could not load ready stock: ${stock.error}`} type="warning" />;
+  return (
+    <div className="section-card mb-4">
+      <div className="card-head flex-wrap gap-2">
+        <strong>Released vials ready for dispatch <span className="nl-count">{stock.loading ? "…" : `${sum(ready)} available`}</span></strong>
+        <div className="d-flex gap-2"><span className="nl-pill nl-pill-karyotype">🧬 Karyotype tested: {karyotype}</span><span className="nl-pill nl-pill-normal">Normal stock: {normal}</span></div>
+      </div>
+      <div className="nl-blood-grid">
+        {BLOOD_GROUPS.map(group => {
+          const rows = forGroup(group);
+          const kt = sum(rows.filter(row => row.stockClassification === "KARYOTYPE_TESTED"));
+          const total = sum(rows);
+          return (
+            <div key={group} className={`nl-blood-tile ${total ? "has-stock" : ""}`}>
+              <span className="nl-pill nl-pill-blood">{group}</span>
+              <strong>{total}</strong>
+              {total > 0 && <small>{kt} KT / {total - kt} Norm</small>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function OrderId({ id }) {
   const [visible, setVisible] = useState(false);
   const text = String(id || "");
@@ -324,9 +357,10 @@ export default function DispatchPage() {
 
   return (
     <>
-      <PageTitle title={hospital ? "Stock requests" : ceo ? "Hospital orders and dispatches" : "Dispatch"} subtitle={hospital ? "Request stock and confirm delivered vials" : ceo ? "Read-only operations for your linked hospitals" : "Review requests, select eligible vials, and track receipt"} action={action} />
+      <PageTitle count={list.pagination ? `${list.pagination.total} orders` : undefined} title={hospital ? "Stock requests" : ceo ? "Hospital orders and dispatches" : "Hospital Order Allocation & Dispatch"} subtitle={hospital ? "Request stock and confirm delivered vials" : ceo ? "Read-only operations for your linked hospitals" : "Review requests, select eligible vials, and track receipt"} action={action} />
       <Alert message={message?.text} type={message?.type} onClose={() => setMessage(null)} />
       <Alert message={list.error} />
+      {bank && <ReadyStockSummary />}
       <div className="section-card dispatch-list-card">
         <DataTable headers={columns} empty={list.loading ? "Loading orders…" : "No orders or dispatches found for linked hospitals."}>
           {list.records.map(order => {
@@ -336,8 +370,8 @@ export default function DispatchPage() {
                 <td><OrderId id={order.orderId} />{order.dispatchedAt && <div className="dispatch-order-meta">Dispatched {localDate(order.dispatchedAt)}{order.receivedAt ? ` · Received ${localDate(order.receivedAt)}` : ""}</div>}</td>
                 <td>{hospitalName(order.hospitalId)}</td>
                 <td>{order.centreId}</td>
-                <td>{(order.items || []).map(item => `${item.bloodGroup} × ${item.quantity}`).join(", ")}</td>
-                <td>{order.vialCount ?? order.vialIds?.length ?? 0}</td>
+                <td><div className="d-flex flex-wrap gap-1">{(order.items || []).map((item, index) => <span key={index} className="nl-pill nl-pill-blood">{item.bloodGroup} × {item.quantity}</span>)}</div></td>
+                <td><span className="nl-mono">{order.vialCount ?? order.vialIds?.length ?? 0}</span>{order.vialIds?.length > 0 && <div className="nl-mono-muted text-wrap">{order.vialIds.join(", ")}</div>}</td>
                 <td><div><Badge status={order.status} /></div>{reference && <div className="small text-secondary text-break mt-1"><span className="text-muted">Reference:</span> {reference}</div>}</td>
                 {!ceo && <td>{hospital ? order.requestedBy || "" : order.dispatchedBy || ""}</td>}
                 {!ceo && (

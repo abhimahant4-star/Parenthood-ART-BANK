@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AttachmentSlots, addSlot, newSlots } from "@/components/AttachmentSlots";
 import { useSession } from "@/components/SessionProvider";
-import { Alert, Badge, DataTable, Field, Icon, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
+import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest, downloadAttachment } from "@/lib/api";
 import { canOperateBank, validUploadFile } from "@/lib/format";
 
@@ -193,7 +193,7 @@ export default function DocumentsPage() {
             <tr key={item.attachmentId}>
               <td><PackageId id={item.attachmentId} /></td>
               <td><div className="document-label">{item.label || item.category}</div></td>
-              <td><div className="document-scope"><span className="document-hospital-id">{item.category === "DONOR_DOCUMENT" ? `Donor ID · ${item.relatedId}` : `${item.hospitalId} / ${item.centreId}`}</span></div></td>
+              <td>{item.category === "DONOR_DOCUMENT" ? <span className="nl-donor-id"><Icon name="lock-fill" />{item.relatedId}</span> : <IdTag value={`${item.hospitalId} / ${item.centreId}`} icon="hospital" tone="slate" />}</td>
               <td>
                 <div className="document-file-list">
                   {(item.files || []).length ? item.files.map(file => (
@@ -203,8 +203,8 @@ export default function DocumentsPage() {
                   )) : "No files"}
                 </div>
               </td>
-              <td><Badge status={item.status} /></td>
-              <td>{bank && item.category !== "DONOR_DOCUMENT" && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => toggle(item)}>{item.status === "SUBMITTED" ? "Unsubmit" : "Submit"}</button>}</td>
+              <td><Badge status={item.status} label={item.status === "SUBMITTED" ? "Submitted (hospital visible)" : item.status === "UNSUBMITTED" ? "Unsubmitted (bank only)" : undefined} /></td>
+              <td>{bank && item.category !== "DONOR_DOCUMENT" && <button className={`btn btn-sm ${item.status === "SUBMITTED" ? "btn-outline-primary" : "btn-primary"}`} type="button" onClick={() => toggle(item)}>{item.status === "SUBMITTED" ? "Unsubmit" : "Submit to centre"}</button>}</td>
             </tr>
           ))}
         </DataTable>

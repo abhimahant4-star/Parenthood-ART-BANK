@@ -31,23 +31,27 @@ test("batch quarantine independently ends on its exact six-calendar-month date",
 });
 
 test("batch and vial IDs are readable, linked, and sequential", () => {
-  const batchId = formatBatchId(2026, 1);
-  assert.equal(batchId, "ARTB-2026-00001");
-  assert.equal(formatBatchId(2026, 12), "ARTB-2026-00012");
-  assert.equal(formatBatchId(2026, 99999), "ARTB-2026-99999");
+  const batchId = formatBatchId(1);
+  assert.equal(batchId, "BAT-101");
+  assert.equal(formatBatchId(12), "BAT-112");
+  assert.equal(formatBatchId(900), "BAT-1000");
   const three = makeVialIds(batchId, 3, "O+");
   const five = makeVialIds(batchId, 5, "O+");
-  assert.deepEqual(three, ["ARTB-2026-00001-O-V01", "ARTB-2026-00001-O-V02", "ARTB-2026-00001-O-V03"]);
-  assert.deepEqual(five.slice(-2), ["ARTB-2026-00001-O-V04", "ARTB-2026-00001-O-V05"]);
-  assert.deepEqual(makeVialIds(batchId, 1, "AB-"), ["ARTB-2026-00001-AB-V01"]);
-  assert.deepEqual(makeVialIds(batchId, 1, "B+"), ["ARTB-2026-00001-B-V01"]);
+  assert.deepEqual(three, ["V-101", "V-102", "V-103"]);
+  assert.deepEqual(five.slice(-2), ["V-104", "V-105"]);
+  assert.deepEqual(makeVialIds("BAT-102", 1, "AB-"), ["V-201"]);
+  assert.deepEqual(makeVialIds("BAT-110", 2, "B+"), ["V-1001", "V-1002"]);
+  assert.deepEqual(makeVialIds("BAT-1000", 1, "B+"), ["V-90001"]);
   assert.equal(new Set(five).size, five.length);
-  assert.throws(() => formatBatchId(2026, 0), RangeError);
-  assert.throws(() => formatBatchId(2026, 100000), RangeError);
-  assert.deepEqual(makeVialIds(batchId, 1, "O+"), ["ARTB-2026-00001-O-V01"]);
+  // Vial IDs from different batches never collide, because the last two digits are always the vial number.
+  const many = Array.from({ length: 300 }, (_, index) => makeVialIds(formatBatchId(index + 1), 5, "A+")).flat();
+  assert.equal(new Set(many).size, many.length);
+  assert.throws(() => formatBatchId(0), RangeError);
+  assert.throws(() => formatBatchId(9999900), RangeError);
   assert.throws(() => makeVialIds(batchId, 0), RangeError);
   assert.throws(() => makeVialIds(batchId, 6), RangeError);
-  assert.throws(() => makeVialIds("BATCH-invalid", 3), TypeError);
-  assert.throws(() => makeVialIds("ARTB-2026-100000", 1, "O+"), TypeError);
+  assert.throws(() => makeVialIds("BATCH-invalid", 3, "O+"), TypeError);
+  assert.throws(() => makeVialIds("BAT-100", 1, "O+"), TypeError);
+  assert.throws(() => makeVialIds("ARTB-2026-00001", 1, "O+"), TypeError);
   assert.throws(() => makeVialIds(batchId, 1, "invalid"), TypeError);
 });

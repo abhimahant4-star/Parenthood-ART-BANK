@@ -70,9 +70,9 @@ export default function SignaturesPage() {
         <DataTable headers={["Name", "Designation", "Version", "Status", "Actions"]} empty={list.loading ? "Loading signatories…" : "No records yet"}>
           {list.records.map(signer => (
             <tr key={signer.signerId}>
-              <td>{signer.name}</td>
+              <td className="fw-semibold">{signer.name}</td>
               <td>{signer.designation}</td>
-              <td>v{signer.version}</td>
+              <td><span className="nl-count">v{signer.version}</span></td>
               <td><Badge status={signer.status === "ACTIVE" ? "Active" : "Inactive"} /></td>
               <td>{superAdmin && <>
                 <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ signer })}>Edit</button>{" "}
