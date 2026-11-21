@@ -30,31 +30,35 @@ function isQuarantineComplete(quarantineEnd, currentTime = new Date()) {
   return isAtOrAfterDate(currentTime, quarantineEnd);
 }
 
-// Short, easy-to-type IDs: the first batch is BAT-101, the next BAT-102, and so on.
+// Short IDs that start with the blood group, numbered separately per group:
+// the first O+ batch is O+101 (vials O+101-1 to O+101-5), the first B- batch is B-101.
 const BATCH_NUMBER_OFFSET = 100;
 const MAX_BATCH_SEQUENCE = 9999899;
+const BLOOD_GROUP_PATTERN = /^(AB|A|B|O)[+-]$/;
 
-function formatBatchId(sequence) {
+function normalizeBloodGroup(bloodGroup) {
+  const value = typeof bloodGroup === "string" ? bloodGroup.trim().toUpperCase() : "";
+  if (!BLOOD_GROUP_PATTERN.test(value)) throw new TypeError("A valid donor blood group is required to create batch and vial IDs.");
+  return value;
+}
+
+function formatBatchId(bloodGroup, sequence) {
+  const group = normalizeBloodGroup(bloodGroup);
   if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > MAX_BATCH_SEQUENCE) {
     throw new RangeError(`Batch sequence must be from 1 to ${MAX_BATCH_SEQUENCE}.`);
   }
-  return `BAT-${sequence + BATCH_NUMBER_OFFSET}`;
+  return `${group}${sequence + BATCH_NUMBER_OFFSET}`;
 }
 
-// Vials take the batch's position plus a two-digit vial number: BAT-101 gives V-101 to V-105, BAT-102 gives V-201.
 function makeVialIds(batchId, count, bloodGroup) {
   if (!Number.isInteger(Number(count)) || Number(count) < 1 || Number(count) > 5) {
     throw new RangeError("Vial count must be from 1 to 5.");
   }
-  const batchNumber = typeof batchId === "string" ? Number(batchId.match(/^BAT-([1-9]\d{2,6})$/)?.[1]) : NaN;
-  if (!Number.isSafeInteger(batchNumber) || batchNumber <= BATCH_NUMBER_OFFSET) {
-    throw new TypeError("A valid batch ID is required.");
-  }
-  if (typeof bloodGroup !== "string" || !/^(AB|A|B|O)[+-]$/.test(bloodGroup.trim().toUpperCase())) {
-    throw new TypeError("A valid donor blood group is required to create vial IDs.");
-  }
-  const position = batchNumber - BATCH_NUMBER_OFFSET;
-  return Array.from({ length: Number(count) }, (_, index) => `V-${position}${String(index + 1).padStart(2, "0")}`);
+  const group = normalizeBloodGroup(bloodGroup);
+  const match = typeof batchId === "string" ? batchId.match(/^((?:AB|A|B|O)[+-])([1-9]\d{2,6})$/) : null;
+  if (!match || Number(match[2]) <= BATCH_NUMBER_OFFSET) throw new TypeError("A valid batch ID is required.");
+  if (match[1] !== group) throw new TypeError("The batch ID must start with the donor's blood group.");
+  return Array.from({ length: Number(count) }, (_, index) => `${batchId}-${index + 1}`);
 }
 
 module.exports = { parseCollectionDate, addCalendarMonths, nextCollectionDate, isAtOrAfterDate, isQuarantineComplete, formatBatchId, makeVialIds };

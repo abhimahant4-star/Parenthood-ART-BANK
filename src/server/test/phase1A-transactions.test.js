@@ -419,9 +419,8 @@ test("batch creation commits batch and numbered vial IDs beginning at 3", async 
   assert.equal(response.status, 201);
   assert.equal(response.body.success, true);
   assert.equal(response.body.data.vials.length, 3);
-  assert.match(response.body.data.batch.batchId, /^BAT-\d{3,7}$/);
-  const position = Number(response.body.data.batch.batchId.slice(4)) - 100;
-  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["01", "02", "03"].map(suffix => `V-${position}${suffix}`));
+  assert.match(response.body.data.batch.batchId, /^O\+\d{3,7}$/);
+  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), [1, 2, 3].map(number => `${response.body.data.batch.batchId}-${number}`));
   assert.ok(response.body.data.vials.every(vial => vial.bloodGroup === "O+" && vial.stockClassification === "KARYOTYPE_TESTED"));
   assert.equal(await Vial.countDocuments({ batchId: response.body.data.batch.batchId }), 3);
 });
@@ -487,8 +486,8 @@ test("batch collection allows the six-month boundary and persists the donor bloo
   }
   assert.equal(response.status, 201);
   assert.equal(response.body.data.batch.bloodGroup, "O+");
-  const position = Number(response.body.data.batch.batchId.slice(4)) - 100;
-  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), ["01", "02", "03", "04", "05"].map(suffix => `V-${position}${suffix}`));
+  assert.match(response.body.data.batch.batchId, /^O\+\d{3,7}$/);
+  assert.deepEqual(response.body.data.vials.map(vial => vial.vialId), [1, 2, 3, 4, 5].map(number => `${response.body.data.batch.batchId}-${number}`));
   assert.equal(new Date(response.body.data.batch.quarantineEnd).toISOString().slice(0, 10), addCalendarMonths(today, 6).toISOString().slice(0, 10));
   assert.equal((await Donor.findById(donor._id)).lastCollectionAt.toISOString().slice(0, 10), today.toISOString().slice(0, 10));
 });

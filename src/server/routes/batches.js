@@ -10,9 +10,10 @@ const { withTransaction, RouteError, sendRouteError } = require("../services/tra
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 const { parseCollectionDate, addCalendarMonths, nextCollectionDate, isAtOrAfterDate, isQuarantineComplete, formatBatchId, makeVialIds } = require("../services/batchRules");
 
-async function nextBatchId() {
-  // One running counter for short batch IDs (BAT-101, BAT-102, ...). Older ARTB-year IDs are kept as they are.
-  const name = "batch-short";
+async function nextBatchId(bloodGroup) {
+  // One running counter per blood group: O+101, O+102, ... and separately B-101, B-102, ...
+  // Older BAT- and ARTB- IDs are kept as they are.
+  const name = `batch-${bloodGroup}`;
   await IdSequence.init();
   let sequence;
   try {
@@ -29,7 +30,7 @@ async function nextBatchId() {
   if (sequence.value > 9999899) {
     throw new RouteError(409, "The batch sequence has reached its limit.", "BATCH_SEQUENCE_EXHAUSTED");
   }
-  return formatBatchId(sequence.value);
+  return formatBatchId(bloodGroup, sequence.value);
 }
 
 // =====================================================
@@ -133,7 +134,14 @@ router.post(
       }
       const end = selectedQuarantineEnd;
 
-      const batchId = await nextBatchId();
+      // The batch ID starts with the donor's blood group, so read it before reserving the number.
+      const donorForId = await Donor.findOne({ $or: [{ donorId }, { uhid: String(donorId).toUpperCase() }] }).select("bloodGroup").lean();
+      if (!donorForId) return res.status(404).json({ success: false, message: "Donor not found", errorCode: "DONOR_NOT_FOUND" });
+      const idBloodGroup = String(donorForId.bloodGroup || "").trim().toUpperCase();
+      if (!/^(AB|A|B|O)[+-]$/.test(idBloodGroup)) {
+        return res.status(400).json({ success: false, message: "The selected donor does not have a valid blood group on record", errorCode: "DONOR_BLOOD_GROUP_MISSING" });
+      }
+      const batchId = await nextBatchId(idBloodGroup);
       const vialCreatedAt = new Date();
       const { batch, created } = await withTransaction(async session => {
         const donorRecord = await Donor.findOne({ $or: [{ donorId }, { uhid: String(donorId).toUpperCase() }] })
@@ -156,6 +164,7 @@ router.post(
         if (claimedCollectionSlot.matchedCount !== 1) throw new RouteError(409, "Another collection was just recorded for this donor. Reload and check the six-month interval.", "DONOR_COLLECTION_CONFLICT");
         const linkedBloodGroup = String(donorRecord.bloodGroup || "").trim().toUpperCase();
         if (!linkedBloodGroup) throw new RouteError(400, "The selected donor does not have a blood group on record", "DONOR_BLOOD_GROUP_MISSING");
+        if (linkedBloodGroup !== idBloodGroup) throw new RouteError(409, "The donor's blood group changed while saving. Please try again.", "DONOR_BLOOD_GROUP_CHANGED");
         const stableVialIds = makeVialIds(batchId, vialCount, linkedBloodGroup);
 
         const [createdBatch] = await Batch.create([{
