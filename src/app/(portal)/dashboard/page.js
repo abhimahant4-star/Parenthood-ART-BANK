@@ -181,21 +181,6 @@ export default function DashboardPage() {
               )}
             </div>
           </section>
-          <section className="dashboard-panel mix-panel">
-            <div className="dashboard-panel-head compact">
-              <div><div className="panel-kicker">{ceo ? "LINKED HOSPITAL STOCK" : "STOCK POSITION"}</div><h2>Inventory overview</h2></div>
-              <span className="mix-total">{mixTotal} <small>vials</small></span>
-            </div>
-            <div className="mix-content">
-              {mix.map(([label, count, tone]) => (
-                <div className="mix-row" key={label}>
-                  <div className="mix-label"><span>{label}</span><strong>{count}</strong></div>
-                  <div className="mix-track"><span className={tone} style={{ width: `${mixTotal ? Math.round(count / mixTotal * 100) : 0}%` }} /></div>
-                </div>
-              ))}
-            </div>
-            <Link className="mix-footer" href="/vials">{ceo ? "Explore linked stock" : "Explore vial inventory"} <Icon name="arrow-right" /></Link>
-          </section>
           <section className="dashboard-panel pending-panel">
             <div className="dashboard-panel-head compact"><div><div className="panel-kicker">ATTENTION</div><h2>Pending actions</h2></div></div>
             <div className="pending-action-list">
@@ -208,6 +193,27 @@ export default function DashboardPage() {
           </section>
         </aside>
       </div>
+      <section className="dashboard-panel mix-panel mix-strip">
+        <div className="dashboard-panel-head compact">
+          <div><div className="panel-kicker">{ceo ? "LINKED HOSPITAL STOCK" : "STOCK POSITION"}</div><h2>Inventory overview</h2></div>
+          <div className="d-flex align-items-center gap-3">
+            <span className="mix-total">{mixTotal} <small>vials</small></span>
+            <Link className="mix-footer" href="/vials">{ceo ? "Explore linked stock" : "Explore vial inventory"} <Icon name="arrow-right" /></Link>
+          </div>
+        </div>
+        <div className="mix-strip-grid" style={{ "--mix-count": mix.length }}>
+          {mix.map(([label, count, tone]) => {
+            const percent = mixTotal ? Math.round(count / mixTotal * 100) : 0;
+            return (
+              <div className="mix-tile" key={label}>
+                <div className="mix-label"><span>{label}</span><small>{percent}%</small></div>
+                <strong className="mix-count">{count}</strong>
+                <div className="mix-track"><span className={tone} style={{ width: `${percent}%` }} /></div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
     </>
   );
 }
