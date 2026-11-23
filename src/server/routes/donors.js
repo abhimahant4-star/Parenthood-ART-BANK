@@ -4,7 +4,10 @@ const Donor = require("../models/Donor");
 const Batch = require("../models/Batch");
 const Vial = require("../models/Vial");
 const crypto = require("crypto");
-const { withTransaction } = require("../services/transactionService");
+const { withTransaction, sendRouteError } = require("../services/transactionService");
+const { deleteDonor } = require("../services/recordAdminService");
+const Attachment = require("../models/Attachment");
+const { deletePrivateFile } = require("../middleware/privateUpload");
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 
 // Quick-pick heights use feet.inches notation (for example, 5.8 means 5 ft 8 in).
@@ -326,6 +329,98 @@ router.post(
     }
   }
 );
+
+// Super Admin: edit a donor's details. Blood group can change only before any batch exists,
+// because batch and vial IDs start with it. A new Aadhaar number is hashed and masked like at registration.
+router.put("/:donorId", requireAuth, allowRoles("SUPER_ADMIN"), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const donor = await Donor.findOne({ donorId: req.params.donorId });
+    if (!donor) return res.status(404).json({ success: false, message: "Donor not found", errorCode: "DONOR_NOT_FOUND" });
+    const fail = (message, errorCode) => res.status(400).json({ success: false, message, errorCode });
+
+    if (body.name !== undefined) {
+      if (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 160) return fail("Enter the donor's full legal name", "REQUIRED_DONOR_FIELDS");
+      donor.name = body.name.trim();
+    }
+    if (body.manualDonorId !== undefined) {
+      const manualDonorId = String(body.manualDonorId || "").trim();
+      if (!manualDonorId || manualDonorId.length > 50) return fail("Manual donor ID is required and must be 50 characters or fewer", "INVALID_MANUAL_DONOR_ID");
+      if (manualDonorId !== donor.manualDonorId && await Donor.exists({ manualDonorId, _id: { $ne: donor._id } })) {
+        return res.status(409).json({ success: false, message: "Manual donor ID already exists", errorCode: "MANUAL_DONOR_ID_EXISTS" });
+      }
+      donor.manualDonorId = manualDonorId;
+    }
+    if (body.maritalStatus !== undefined) {
+      if (!["MARRIED", "UNMARRIED"].includes(body.maritalStatus)) return fail("Marital status must be Married or Unmarried", "INVALID_MARITAL_STATUS");
+      donor.maritalStatus = body.maritalStatus;
+    }
+    if (body.dob !== undefined) {
+      const dob = new Date(body.dob);
+      if (!body.dob || Number.isNaN(dob.getTime()) || dob > new Date()) return fail("Date of birth must be a valid date in the past", "INVALID_DOB");
+      if (ageOn(dob) < 21 || ageOn(dob) > 55) return fail("Donor age must be between 21 and 55 years", "DONOR_AGE_INELIGIBLE");
+      donor.dob = dob;
+    }
+    if (body.bloodGroup !== undefined) {
+      const bloodGroup = String(body.bloodGroup || "").trim().toUpperCase();
+      if (!/^(AB|A|B|O)[+-]$/.test(bloodGroup)) return fail("Choose a valid blood group", "INVALID_BLOOD_GROUP");
+      if (bloodGroup !== String(donor.bloodGroup || "").toUpperCase() && (await Batch.exists({ "donor.donorId": donor.donorId }) || await Vial.exists({ donorId: donor.donorId }))) {
+        return res.status(409).json({ success: false, message: "Blood group cannot be changed after collections exist, because batch and vial IDs include it", errorCode: "BLOOD_GROUP_LOCKED" });
+      }
+      donor.bloodGroup = bloodGroup;
+    }
+    if (body.status !== undefined) {
+      if (!DONOR_STATUSES.includes(body.status)) return fail("Donor status must be Active, Inactive or Retired", "INVALID_DONOR_STATUS");
+      donor.status = body.status;
+    }
+    const allowedTraits = { complexion: ["Fair", "Wheatish"], eyeColour: ["Black", "Brown"], hairColour: ["Black", "Brown"], build: ["Slim", "Moderate"] };
+    for (const [field, allowed] of Object.entries(allowedTraits)) {
+      if (body[field] === undefined) continue;
+      if (body[field] !== "" && body[field] !== null && !allowed.includes(body[field])) return fail(`Invalid ${field} value`, "INVALID_DONOR_TRAIT");
+      donor[field] = body[field] || undefined;
+    }
+    if (body.height !== undefined) {
+      const height = String(body.height || "").trim();
+      if (height && !isFeetInchesHeight(height) && height !== donor.height) return fail("Height must use feet.inches notation (for example, 5.8 ft)", "INVALID_HEIGHT");
+      donor.height = height || undefined;
+    }
+    if (body.aadhaar !== undefined && body.aadhaar !== "") {
+      if (!/^\d{12}$/.test(String(body.aadhaar))) return fail("Aadhaar must contain exactly 12 digits", "INVALID_AADHAAR");
+      donor.aadhaarHash = crypto.createHash("sha256").update(String(body.aadhaar)).digest("hex");
+      donor.aadhaarMasked = `${String(body.aadhaar).slice(0, 2)}••••••••${String(body.aadhaar).slice(-2)}`;
+    }
+
+    await donor.save();
+    await recordDonorAudit(req, "DONOR_UPDATED", donor.donorId, "Donor updated by Super Admin");
+    const saved = donor.toObject();
+    delete saved.aadhaarHash;
+    return res.json({ success: true, message: "Donor updated", data: saved });
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ success: false, message: "Manual donor ID already exists", errorCode: "MANUAL_DONOR_ID_EXISTS" });
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to update donor", errorCode: "DONOR_UPDATE_ERROR" });
+  }
+});
+
+// Super Admin: delete a donor who has no batches, vials or orders. Their private donor files are removed too.
+router.delete("/:donorId", requireAuth, allowRoles("SUPER_ADMIN"), async (req, res) => {
+  try {
+    const attachmentFilter = { hospitalId: "ART_BANK", centreId: "ART_BANK", relatedId: req.params.donorId, category: { $in: ["DONOR_AADHAAR", "DONOR_DOCUMENT"] } };
+    const files = [];
+    const result = await withTransaction(async session => {
+      const deleted = await deleteDonor(req, req.params.donorId, session);
+      const attachments = await Attachment.find(attachmentFilter).session(session).lean();
+      files.push(...attachments.flatMap(item => (item.files || []).map(file => file.storageName)));
+      await Attachment.deleteMany(attachmentFilter, { session });
+      return { ...deleted, filesDeleted: files.length };
+    });
+    // Files are removed only after the database change has been saved.
+    for (const storageName of files) await deletePrivateFile(storageName).catch(error => console.error("Could not remove donor file", error.message));
+    return res.json({ success: true, message: "Donor deleted", data: result });
+  } catch (error) {
+    return sendRouteError(res, error, { message: "Failed to delete donor", errorCode: "DONOR_DELETE_ERROR" });
+  }
+});
 
 // Records the donor's statutory screening results (HIV, HBsAg, HCV, VDRL, thalassemia, karyotype).
 router.patch("/:donorId/screening", requireAuth, allowRoles("SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"), async (req, res) => {

@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useSession } from "@/components/SessionProvider";
 import { Alert, Badge, BloodPill, DataTable, Icon, IdTag, Modal, PageTitle, StockPill, statusLabel, useLoader, usePagedList } from "@/components/ui";
-import { apiRequest, loadAll } from "@/lib/api";
+import { loadAll } from "@/lib/api";
+import { RecordActions, useRecordModals } from "@/components/RecordActions";
 import { BLOOD_GROUPS, normalizeBloodGroup } from "@/lib/format";
 
 const ALL_STATUSES = ["CREATED", "QUARANTINED", "RELEASED", "AVAILABLE_AT_ART_BANK", "DISPATCHED", "UNUSED_AT_HOSPITAL", "RETURNED_BEFORE_MAPPING", "MAPPED_USED", "BLOCKED", "RECALLED", "DISCARDED", "EXPIRED"];
 const EMPTY_FILTERS = { q: "", status: "", bloodGroup: "", stockClassification: "", location: "" };
-const stockTypeLabel = value => (value === "KARYOTYPE_TESTED" ? "Karyotype tested" : value === "NORMAL_STOCK" ? "Normal stock" : "Not specified");
 
 function CompactId({ value, kind }) {
   const [visible, setVisible] = useState(false);
@@ -26,34 +26,35 @@ function CompactId({ value, kind }) {
   );
 }
 
+// Movement history: Super Admin only (the server sends it to no other role).
 function VialHistoryModal({ vial, onClose }) {
-  const details = [["Vial ID", vial.vialId], ["Donor UHID", vial.donorUhid || vial.donorId], ["Batch ID", vial.batchId], ["Current location", vial.currentLocation], ["Status", vial.status]];
+  const details = [["Vial ID", vial.vialId], ["Donor UHID", vial.donorUhid || vial.donorId], ["Batch ID", vial.batchId], ["Current location", vial.currentLocation], ["Status", statusLabel(vial.status)]];
   const history = vial.statusHistory || [];
   return (
-    <Modal title="Vial status history" onClose={onClose}>
+    <Modal title={`Vial ${vial.vialId} history`} onClose={onClose}>
       <section className="vial-history-summary row g-3 mb-4" aria-label="Vial details">
         {details.map(([label, value]) => <div className="col-sm-6" key={label}><div className="vial-history-field"><div className="detail-label">{label}</div><div className="detail-value">{value || "—"}</div></div></div>)}
       </section>
-      <section className="vial-history-log" aria-labelledby="vialHistoryHeading">
-        <div className="vial-history-heading">
-          <span className="vial-history-heading-icon"><Icon name="clock-history" /></span>
-          <span><strong id="vialHistoryHeading">Status history</strong><small>Recorded vial activity</small></span>
-        </div>
-        <ul className="vial-history-timeline" aria-label="Vial status events">
-          {history.length ? history.map((event, index) => {
-            const valid = event.at && !Number.isNaN(new Date(event.at).getTime());
-            return (
-              <li className="vial-history-event" key={`${event.status}-${index}`}>
-                <div className="vial-history-event-status"><Badge status={event.status} /></div>
-                <div className="vial-history-event-meta">
-                  <time>{valid ? new Date(event.at).toLocaleString() : "Time unavailable"}</time>
-                  <span>{event.user || event.by || event.dispatchedBy || event.receivedBy || "system"}</span>
-                </div>
-              </li>
-            );
-          }) : <li className="vial-history-empty"><Icon name="info-circle" />No status changes have been recorded yet.</li>}
-        </ul>
-      </section>
+      <div className="vial-history-heading">
+        <span className="vial-history-heading-icon"><Icon name="clock-history" /></span>
+        <span><strong>Custody and status history</strong><small>{history.length} recorded event{history.length === 1 ? "" : "s"}</small></span>
+      </div>
+      <ul className="vial-history-timeline" aria-label="Vial status events">
+        {history.length ? history.map((event, index) => {
+          const valid = event.at && !Number.isNaN(new Date(event.at).getTime());
+          return (
+            <li className="vial-history-event" key={`${event.status}-${index}`}>
+              <div className="vial-history-event-status"><Badge status={event.status} /></div>
+              <div className="vial-history-event-meta">
+                <time>{valid ? new Date(event.at).toLocaleString() : "Time unavailable"}</time>
+                <span>{event.user || event.by || event.dispatchedBy || event.receivedBy || "system"}</span>
+                {event.coupleId && <span>Case {event.coupleId}</span>}
+                {event.orderId && <span>Order {event.orderId}</span>}
+              </div>
+            </li>
+          );
+        }) : <li className="vial-history-empty"><Icon name="info-circle" />No status changes have been recorded yet.</li>}
+      </ul>
     </Modal>
   );
 }
@@ -61,12 +62,12 @@ function VialHistoryModal({ vial, onClose }) {
 export default function VialsPage() {
   const { user } = useSession();
   const isHospital = user.role === "HOSPITAL_USER", ceo = user.role === "CHAIN_CEO";
-  const isAdmin = ["SUPER_ADMIN", "ART_BANK_ADMIN"].includes(user.role);
+  const superAdmin = user.role === "SUPER_ADMIN";
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [history, setHistory] = useState(null);
-  const [message, setMessage] = useState("");
   const list = usePagedList("/vials", { ...filters, q: filters.q.trim() });
   const extras = useLoader(() => loadAll({ stock: "/stock", hospitals: ceo ? "/hospitals" : null }), [ceo]);
+  const records = useRecordModals(() => { list.reload(); extras.reload(); });
 
   const stock = extras.data?.results.stock?.data;
   const hospitals = extras.data?.results.hospitals?.data || [];
@@ -81,29 +82,13 @@ export default function VialsPage() {
       : [["Vials in scope", inventoryTotal], ["Available at ART Bank", count("RELEASED", "AVAILABLE_AT_ART_BANK")], ["At hospitals", count("DISPATCHED", "UNUSED_AT_HOSPITAL")], ["Mapped / used", count("MAPPED_USED")]];
   const statuses = ALL_STATUSES.filter(status => !isHospital || !["CREATED", "QUARANTINED", "RELEASED", "AVAILABLE_AT_ART_BANK"].includes(status));
   const locations = [...new Set([...list.records.map(vial => vial.currentLocation), filters.location].filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
-  const columns = isHospital ? ["Vial ID", "Blood group", "Location", "Status"] : ceo ? ["Vial ID", "Hospital", "Centre", "Blood group", "Stock type", "Location", "Status"] : ["Vial ID", "Donor UHID", "Batch ID", "Blood group", "Stock type", "Location", "Status", ""];
+  const columns = isHospital ? ["Vial ID", "Blood group", "Location", "Status"] : ceo ? ["Vial ID", "Hospital", "Centre", "Blood group", "Stock type", "Location", "Status"] : ["Vial ID", "Donor UHID", "Batch ID", "Blood group", "Stock type", "Location", "Status", ...(superAdmin ? ["Action"] : [])];
   const setFilter = key => event => setFilters(current => ({ ...current, [key]: event.target.value }));
-
-  const openHistory = async id => {
-    setMessage("");
-    try { setHistory((await apiRequest(`/vials/${encodeURIComponent(id)}`)).data); }
-    catch (error) { setMessage(error.message || "Could not load vial history."); }
-  };
-  const changeStatus = async (vialId, status) => {
-    const action = status === "BLOCKED" ? "block" : "recall";
-    if (!window.confirm(`Confirm ${action} for vial ${vialId}?`)) return;
-    setMessage("");
-    try {
-      await apiRequest(`/vials/${encodeURIComponent(vialId)}/status`, { method: "PATCH", body: { status } });
-      list.reload();
-      extras.reload();
-    } catch (error) { setMessage(error.message); }
-  };
 
   return (
     <>
       <PageTitle count={`${inventoryTotal} vials tracked`} title={isHospital ? "My Stock" : ceo ? "Linked hospital stock" : "Vial inventory"} subtitle={isHospital ? "Vial inventory in your hospital scope" : ceo ? "Operational vial records for linked hospital accounts" : "Individual vial records, classification and movement history"} />
-      <Alert message={message || list.error} />
+      <Alert message={list.error} />
       <div className="row g-3 mb-4">
         {stats.map(([label, value]) => <div className={`col-6 col-xl-${isHospital ? 4 : 3}`} key={label}><div className="stat-card compact-stat"><div className="stat-label">{label}</div><div className="stat-value">{value}</div></div></div>)}
       </div>
@@ -140,17 +125,18 @@ export default function VialsPage() {
               const stockType = <StockPill value={vial.stockClassification} />;
               if (isHospital) return <tr key={vial.vialId}><td>{id}</td><td>{blood}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td></tr>;
               if (ceo) return <tr key={vial.vialId}><td>{id}</td><td>{hospitalName(vial.hospitalId)}</td><td>{vial.centreId || "—"}</td><td>{blood}</td><td>{stockType}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td></tr>;
-              const targets = ["QUARANTINED", "RELEASED", "AVAILABLE_AT_ART_BANK", "DISPATCHED", "UNUSED_AT_HOSPITAL"].includes(vial.status) ? ["BLOCKED", "RECALLED"] : vial.status === "BLOCKED" ? ["RECALLED"] : [];
               return (
                 <tr key={vial.vialId}>
                   <td>{id}</td><td><IdTag value={vial.donorUhid || vial.donorId} icon="fingerprint" /></td><td>{String(vial.batchId).length > 24 ? <CompactId value={vial.batchId} kind="batch" /> : <IdTag value={vial.batchId} icon="layers" tone="slate" />}</td><td>{blood}</td>
                   <td>{stockType}</td><td>{vial.currentLocation || "—"}</td><td><Badge status={vial.status} /></td>
-                  <td>
-                    <div className="inventory-actions">
-                      <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => openHistory(vial.vialId)}><Icon name="clock-history" className="me-1" />History</button>
-                      {isAdmin && targets.map(target => <button key={target} className="btn btn-sm btn-outline-danger" type="button" onClick={() => changeStatus(vial.vialId, target)}>{target === "BLOCKED" ? "Block" : "Recall"}</button>)}
-                    </div>
-                  </td>
+                  {superAdmin && (
+                    <td>
+                      <div className="d-flex align-items-center gap-2">
+                        <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setHistory(vial)}><Icon name="clock-history" className="me-1" />History</button>
+                        <RecordActions label={`vial ${vial.vialId}`} onEdit={() => records.open("editVial", vial)} onDelete={() => records.open("deleteVial", vial)} />
+                      </div>
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -163,6 +149,7 @@ export default function VialsPage() {
             : <span className="small text-secondary">All {list.pagination?.total ?? list.records.length} records loaded</span>}
         </div>
       </div>
+      {records.element}
       {history && <VialHistoryModal vial={history} onClose={() => setHistory(null)} />}
     </>
   );

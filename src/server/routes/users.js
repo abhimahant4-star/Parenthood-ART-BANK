@@ -3,6 +3,7 @@ const bcrypt = require("bcryptjs");
 const mongoose = require("mongoose");
 
 const User = require("../models/User");
+const AuditLog = require("../models/AuditLog");
 const { requireAuth, allowRoles } = require("../middleware/auth");
 const { scopeId, scopeNameKey, hasHospitalScopeNameCollision } = require("../utils/scopeIds");
 const { withTransaction } = require("../services/transactionService");
@@ -444,6 +445,8 @@ router.put(
         const user = await User.findById(req.params.id).session(session);
         if (!user) return false;
         user.passwordHash = passwordHash;
+        user.failedLoginAttempts = 0;
+        user.lockedUntil = undefined;
         user.activeSessionId = null;
         user.sessionVersion = (user.sessionVersion || 1) + 1;
         await user.save({ session });
@@ -527,5 +530,18 @@ router.post(
   }
 );
 
+// Super Admin: unlock an account that was locked after 3 wrong passwords.
+router.post("/:id/unlock", requireAuth, allowRoles("SUPER_ADMIN"), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(404).json({ success: false, message: "User not found", errorCode: "USER_NOT_FOUND" });
+    const user = await User.findByIdAndUpdate(req.params.id, { $set: { failedLoginAttempts: 0 }, $unset: { lockedUntil: 1 } }, { new: true }).select("username").lean();
+    if (!user) return res.status(404).json({ success: false, message: "User not found", errorCode: "USER_NOT_FOUND" });
+    await AuditLog.create({ userId: String(req.user.id), role: req.user.role, action: "ACCOUNT_UNLOCKED", entity: "USER", entityId: String(user._id), summary: "Account unlocked by Super Admin", ip: req.ip });
+    return res.json({ success: true, message: `${user.username} can sign in again` });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, message: "Failed to unlock the account", errorCode: "UNLOCK_ERROR" });
+  }
+});
 
 module.exports = router;

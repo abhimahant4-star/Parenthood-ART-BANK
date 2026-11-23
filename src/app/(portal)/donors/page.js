@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "@/components/SessionProvider";
+import { RecordActions, useIsSuperAdmin, useRecordModals } from "@/components/RecordActions";
 import { Alert, Badge, BloodPill, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle, selectChoices, usePagedList } from "@/components/ui";
 import { apiRequest, downloadAttachment, downloadFile } from "@/lib/api";
 import { BLOOD_GROUPS, DONOR_TRAIT_OPTIONS, HEIGHT_QUICK_PICKS, ageFromDob, displayDob, localDate, normalizeBloodGroup, validUploadFile } from "@/lib/format";
@@ -234,7 +235,7 @@ function DonorStatusControl({ donor, onSaved }) {
   );
 }
 
-function DonorDetailModal({ donor: initialDonor, onClose, onChanged }) {
+function DonorDetailModal({ donor: initialDonor, onClose, onChanged, onEdit, onDelete }) {
   const { user } = useSession();
   const [donor, setDonor] = useState(initialDonor);
   const updateDonor = updated => {
@@ -270,7 +271,15 @@ function DonorDetailModal({ donor: initialDonor, onClose, onChanged }) {
           <div className="col-6 col-md-3" key={label}><div className="stat-card py-2"><div className="stat-label">{label}</div><div className="fw-semibold">{value}</div></div></div>
         ))}
       </div>
-      {["SUPER_ADMIN", "ART_BANK_ADMIN"].includes(user?.role) && <DonorStatusControl key={donor.status} donor={donor} onSaved={updateDonor} />}
+      <div className="d-flex flex-wrap align-items-center justify-content-between gap-2">
+        {["SUPER_ADMIN", "ART_BANK_ADMIN"].includes(user?.role) ? <DonorStatusControl key={donor.status} donor={donor} onSaved={updateDonor} /> : <span />}
+        {(onEdit || onDelete) && (
+          <div className="d-flex gap-2 mb-3">
+            {onEdit && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => onEdit(donor)}><Icon name="pencil-square" className="me-1" />Edit details</button>}
+            {onDelete && <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => onDelete(donor)}><Icon name="trash3" className="me-1" />Delete donor</button>}
+          </div>
+        )}
+      </div>
       <div className="donor-profile-summary">
         {details.map(([label, value]) => <div className="donor-profile-field" key={label}><div className="detail-label">{label}</div><div className="detail-value">{value || "—"}</div></div>)}
       </div>
@@ -398,6 +407,8 @@ export default function DonorsPage() {
   const [exportError, setExportError] = useState("");
   const query = { q: search.trim(), ...filters };
   const list = usePagedList("/donors", query);
+  const superAdmin = useIsSuperAdmin();
+  const records = useRecordModals(list.reload);
   const setFilter = key => event => setFilters(current => ({ ...current, [key]: event.target.value }));
 
   const exportCsv = () => {
@@ -449,7 +460,12 @@ export default function DonorsPage() {
                   <div className="nl-mono-muted">Vials: {donor.trace?.vialTotal ?? 0} total (<span className="nl-available">{donor.trace?.vialAvailable ?? 0} available</span>)</div>
                 </td>
                 <td><Badge status={donor.status || "Active"} /></td>
-                <td className="text-end"><button className="btn btn-sm nl-btn-dark" type="button" onClick={() => setSelected(donor)}><Icon name="eye" className="me-1" />View Profile</button></td>
+                <td className="text-end">
+                  <div className="d-flex align-items-center justify-content-end gap-2">
+                    <button className="btn btn-sm nl-btn-dark" type="button" onClick={() => setSelected(donor)}><Icon name="eye" className="me-1" />View Profile</button>
+                    {superAdmin && <RecordActions label={`donor ${donor.uhid || donor.donorId}`} onEdit={() => records.open("editDonor", donor)} onDelete={() => records.open("deleteDonor", donor)} />}
+                  </div>
+                </td>
               </tr>
             ))}
           </DataTable>
@@ -457,7 +473,10 @@ export default function DonorsPage() {
         <LoadMore list={list} label="donors" />
       </div>
       {creating && <NewDonorModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); list.reload(); }} />}
-      {selected && <DonorDetailModal key={selected.donorId} donor={selected} onClose={() => setSelected(null)} onChanged={list.reload} />}
+      {selected && <DonorDetailModal key={selected.donorId} donor={selected} onClose={() => setSelected(null)} onChanged={list.reload}
+        onEdit={superAdmin ? donor => { setSelected(null); records.open("editDonor", donor); } : undefined}
+        onDelete={superAdmin ? donor => { setSelected(null); records.open("deleteDonor", donor); } : undefined} />}
+      {records.element}
     </>
   );
 }

@@ -8,6 +8,13 @@ const {recordOperationalEvent}=require("../services/operationalAuditService");
 const {minimizeHospitalVial}=require("../services/hospitalDataPrivacy");
 const {getLinkedHospitalScopes,withLinkedHospitalScope}=require("../services/linkedHospitalScopeService");
 const {flexibleIdPattern,containsPattern}=require("../utils/flexibleSearch");
+const {deleteVial,updateVial}=require("../services/recordAdminService");
+// The vial movement history is visible to Super Admin only.
+const withoutHistoryUnlessSuperAdmin=(req,record)=>{
+  if(req.user.role==="SUPER_ADMIN") return record;
+  const {statusHistory,...rest}=record;
+  return rest;
+};
 const escapeRegex=value=>String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 
 router.get("/",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_STAFF","HOSPITAL_USER","CHAIN_CEO"),asyncHandler(async(req,res)=>{
@@ -53,7 +60,7 @@ router.get("/",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_S
   const donors=["HOSPITAL_USER","CHAIN_CEO"].includes(req.user.role) ? [] : await Donor.find({donorId:{$in:[...new Set(vials.map(vial=>vial.donorId))]}}).select("donorId uhid").lean();
   const uhidByDonorId=new Map(donors.map(donor=>[donor.donorId,donor.uhid]));
   const data=vials.map(vial=>{
-    const record={...vial,donorUhid:uhidByDonorId.get(vial.donorId)||vial.donorId};
+    const record=withoutHistoryUnlessSuperAdmin(req,{...vial,donorUhid:uhidByDonorId.get(vial.donorId)||vial.donorId});
     return ["HOSPITAL_USER","CHAIN_CEO"].includes(req.user.role) ? minimizeHospitalVial(record) : record;
   });
   res.json({success:true,data,pagination:{skip:parsedSkip,limit:parsedLimit,total,hasMore:parsedSkip+vials.length<total}});
@@ -72,7 +79,7 @@ router.get("/:vialId",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART
     return res.json({success:true,data:minimizeHospitalVial(vial)});
   }
   const donor=await Donor.findOne({donorId:vial.donorId}).select("uhid").lean();
-  res.json({success:true,data:{...vial,donorUhid:donor?.uhid||vial.donorId}});
+  res.json({success:true,data:withoutHistoryUnlessSuperAdmin(req,{...vial,donorUhid:donor?.uhid||vial.donorId})});
 }));
 
 router.patch("/:vialId/status",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN"),asyncHandler(async(req,res)=>{
@@ -110,4 +117,24 @@ router.patch("/:vialId/status",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_AD
   }
   res.json({success:true,message:"Vial status updated",data:updated});
 }));
+
+// Super Admin: change a vial's stock type.
+router.put("/:vialId",requireAuth,allowRoles("SUPER_ADMIN"),async(req,res)=>{
+  try {
+    const vial=await withTransaction(session=>updateVial(req,req.params.vialId,req.body||{},session));
+    return res.json({success:true,message:"Vial updated",data:vial});
+  } catch(error) {
+    return sendRouteError(res,error,{message:"Failed to update vial",errorCode:"VIAL_UPDATE_ERROR"});
+  }
+});
+
+// Super Admin: delete one vial that never left the ART Bank. The last vial of a batch is removed by deleting the batch.
+router.delete("/:vialId",requireAuth,allowRoles("SUPER_ADMIN"),async(req,res)=>{
+  try {
+    const result=await withTransaction(session=>deleteVial(req,req.params.vialId,session));
+    return res.json({success:true,message:"Vial deleted",data:result});
+  } catch(error) {
+    return sendRouteError(res,error,{message:"Failed to delete vial",errorCode:"VIAL_DELETE_ERROR"});
+  }
+});
 module.exports=router;

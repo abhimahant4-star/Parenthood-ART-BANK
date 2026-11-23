@@ -167,6 +167,13 @@ export default function UsersPage() {
     try { setModal({ type: "hospital", ceos: (await apiRequest("/users/ceos")).data || [] }); }
     catch (error) { setMessage(error.message); }
   };
+  const unlock = async account => {
+    setMessage("");
+    try {
+      await apiRequest(`/users/${encodeURIComponent(account._id)}/unlock`, { method: "POST", body: {} });
+      list.reload();
+    } catch (error) { setMessage(error.message); }
+  };
   const setActive = async (account, active) => {
     setMessage("");
     try {
@@ -193,9 +200,13 @@ export default function UsersPage() {
                 {account.hospitalId ? <span className="nl-mono">{account.hospitalId} / {account.centreId || "Unassigned"}</span> : <span className="text-secondary">{account.chainId || "Global"}</span>}
                 {account.role === "HOSPITAL_USER" && <div className="nl-mono-muted mt-1">{account.linkedCeoId ? `Linked CEO: ${ceoName(account.linkedCeoId)}` : "No linked CEO"}</div>}
               </td>
-              <td><Badge status={account.active ? "ACTIVE" : "INACTIVE"} /></td>
+              <td>
+                <Badge status={account.active ? "ACTIVE" : "INACTIVE"} />
+                {account.lockedUntil && new Date(account.lockedUntil) > new Date() && <div className="mt-1"><Badge status="BLOCKED" label={`Locked until ${new Date(account.lockedUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`} /></div>}
+              </td>
               <td className="d-flex gap-2">
                 {account.role === "HOSPITAL_USER" && <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => setModal({ type: "user", existing: account })}>Edit scope / CEO</button>}
+                {account.lockedUntil && new Date(account.lockedUntil) > new Date() && <button className="btn btn-sm btn-outline-danger" type="button" onClick={() => unlock(account)}>Unlock</button>}
                 <button className="btn btn-sm btn-outline-secondary" type="button" onClick={() => setActive(account, !account.active)}>{account.active ? "Deactivate" : "Activate"}</button>
               </td>
             </tr>

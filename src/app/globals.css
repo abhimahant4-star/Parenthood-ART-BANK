@@ -1000,6 +1000,18 @@ body{background:#f8fafc}
 @media(max-width:900px){.mix-strip-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.mix-strip-grid{grid-template-columns:minmax(0,1fr)}}
 .nl-pill-role{background:#eef2ff;color:#3730a3;border-color:#c7d2fe}
+.map-vial-search{position:relative}
+.map-vial-search .bi{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#64748b}
+.map-vial-search .form-control{padding-left:36px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase}
+.map-vial-search .form-control::placeholder{text-transform:none;letter-spacing:normal;font-family:var(--pb-font-ui)}
+.map-vial-results{display:grid;gap:6px;margin-top:10px;max-height:240px;overflow-y:auto}
+.map-vial-option{display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;text-align:left}
+.map-vial-option:hover,.map-vial-option:focus{border-color:#a5b4fc;background:#eef2ff}
+.map-vial-selected{margin-top:12px;padding:12px 14px;border:1px solid #a7f3d0;border-radius:10px;background:#ecfdf5}
+.record-actions{display:inline-flex;gap:4px;white-space:nowrap}
+.record-action-btn{display:inline-grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #e2e8f0;border-radius:6px;background:#fff;color:#475569;font-size:13px;transition:background .15s,color .15s,border-color .15s}
+.record-action-btn:hover{background:#f1f5f9;color:#0f172a;border-color:#cbd5e1}
+.record-action-btn.danger:hover{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
 .nl-pill-action{background:#f8fafc;color:#0f172a;border-color:#e2e8f0;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;font-weight:700}
 .nl-blood-grid{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px;padding:16px}
 .nl-blood-tile{display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 8px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;opacity:.6}

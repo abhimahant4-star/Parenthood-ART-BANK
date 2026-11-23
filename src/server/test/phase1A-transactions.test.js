@@ -1011,16 +1011,23 @@ test("couple detail API applies role privacy projections and hospital scope", as
   assert.equal(wrongScopeResponse.body.errorCode, "COUPLE_NOT_FOUND");
 });
 
-test("couple registration requires at least one Aadhaar, limits it to 12 digits, and stores only masked values", async () => {
+test("couple registration requires one partner's ID, limits Aadhaar to 12 digits, and stores only masked values", async () => {
   const body = {
     hospitalId,
     centreId,
     husband: { name: "Synthetic Partner One", idType: "Passport", idNumber: "P-100" },
     wife: { name: "Synthetic Partner Two", idType: "", idNumber: "" }
   };
-  const missingAadhaar = await request("/api/couples", hospitalToken, "POST", body);
-  assert.equal(missingAadhaar.status, 400);
-  assert.equal(missingAadhaar.body.errorCode, "AADHAAR_REQUIRED");
+  const noId = await request("/api/couples", hospitalToken, "POST", { ...body, husband: { name: "Synthetic Partner One", idType: "", idNumber: "" } });
+  assert.equal(noId.status, 400);
+  assert.equal(noId.body.errorCode, "IDENTITY_REQUIRED");
+  const typeWithoutNumber = await request("/api/couples", hospitalToken, "POST", { ...body, wife: { name: "Synthetic Partner Two", idType: "Voter ID", idNumber: "" } });
+  assert.equal(typeWithoutNumber.status, 400);
+  assert.equal(typeWithoutNumber.body.errorCode, "IDENTITY_NUMBER_REQUIRED");
+  const passportOnly = await request("/api/couples", hospitalToken, "POST", body);
+  assert.equal(passportOnly.status, 201);
+  tracked.couples.push(passportOnly.body.data.coupleId);
+  assert.equal(passportOnly.body.data.husband.idType, "Passport");
 
   const tooLongAadhaar = await request("/api/couples", hospitalToken, "POST", {
     ...body,

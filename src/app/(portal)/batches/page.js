@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSession } from "@/components/SessionProvider";
 import { Alert, Badge, BloodPill, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle, StockPill, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest } from "@/lib/api";
+import { RecordActions, useRecordModals } from "@/components/RecordActions";
 import { canOperateBank, canReleaseBatch, localDate, subtractSixMonthsFromDate, todayIso } from "@/lib/format";
 
 function nextAllowedCollection(lastCollection) {
@@ -159,6 +160,8 @@ export default function BatchesPage() {
   const list = usePagedList("/batches", { q: q.trim(), status });
   const donors = useLoader(async () => (await apiRequest("/donors?limit=500")).data || [], []);
   const donorFor = id => (donors.data || []).find(donor => donor.donorId === id);
+  const superAdmin = user.role === "SUPER_ADMIN";
+  const records = useRecordModals(() => { list.reload(); donors.reload(); });
 
   const release = async batch => {
     setMessage(null);
@@ -206,13 +209,19 @@ export default function BatchesPage() {
                 <td><span className="nl-mono">{batch.vialCount}</span></td>
                 <td>{localDate(batch.quarantineEnd)}{!released && daysLeft !== null && <div className="nl-mono-muted">{daysLeft > 0 ? `${daysLeft} days left` : "Ready to release"}</div>}</td>
                 <td><Badge status={batch.releaseStatus} /></td>
-                <td>{canReleaseBatch(user) && !released && <button className={`btn btn-sm ${eligible ? "btn-primary" : "btn-outline-primary"}`} type="button" title={eligible ? "Release batch" : "Click to see why release is unavailable"} onClick={() => release(batch)}>Release</button>}</td>
+                <td>
+                  <div className="d-flex align-items-center gap-2">
+                    {canReleaseBatch(user) && !released && <button className={`btn btn-sm ${eligible ? "btn-primary" : "btn-outline-primary"}`} type="button" title={eligible ? "Release batch" : "Click to see why release is unavailable"} onClick={() => release(batch)}>Release</button>}
+                    {superAdmin && <RecordActions label={`batch ${batch.batchId}`} onEdit={() => records.open("editBatch", batch)} onDelete={() => records.open("deleteBatch", batch)} />}
+                  </div>
+                </td>
               </tr>
             );
           })}
         </DataTable>
         <LoadMore list={list} label="batches" />
       </div>
+      {records.element}
       {creating && <NewBatchModal onClose={() => setCreating(false)} onSaved={() => { setCreating(false); list.reload(); donors.reload(); }} />}
     </>
   );

@@ -6,7 +6,7 @@ import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle
 import { apiRequest, downloadAttachment } from "@/lib/api";
 import { validUploadFile } from "@/lib/format";
 
-const ID_TYPES = [{ value: "", label: "Select ID type (optional)" }, ...["Aadhaar", "Passport", "Voter ID", "Driving licence", "Other approved ID"].map(value => ({ value, label: value }))];
+const ID_TYPES = [{ value: "", label: "Select ID type" }, ...["Aadhaar", "Passport", "Voter ID", "Driving licence", "Other approved ID"].map(value => ({ value, label: value }))];
 const EMPTY_FORM = { hName: "", hType: "", hNumber: "", wName: "", wType: "", wNumber: "" };
 
 function PartnerFields({ prefix, title, form, setForm, setFile }) {
@@ -17,8 +17,8 @@ function PartnerFields({ prefix, title, form, setForm, setFile }) {
       <h6 className="mb-3">{title}</h6>
       <div className="row g-3">
         <Field {...fieldProps} label="Full name" name={`${prefix}Name`} required />
-        <Field {...fieldProps} label="Identity document type" name={`${prefix}Type`} choices={ID_TYPES} />
-        <Field {...fieldProps} label="Identity document number" name={`${prefix}Number`} maxLength={isAadhaar ? 12 : 160} inputMode={isAadhaar ? "numeric" : "text"} pattern={isAadhaar ? "[0-9]{1,12}" : undefined} title={isAadhaar ? "Aadhaar numbers must contain no more than 12 digits." : undefined} />
+        <Field {...fieldProps} label={<>Identity document type <span className="text-danger" title="Required for at least one partner">*</span></>} name={`${prefix}Type`} choices={ID_TYPES} />
+        <Field {...fieldProps} label={<>Identity document number <span className="text-danger" title="Required for at least one partner">*</span></>} name={`${prefix}Number`} maxLength={isAadhaar ? 12 : 160} inputMode={isAadhaar ? "numeric" : "text"} pattern={isAadhaar ? "[0-9]{1,12}" : undefined} title={isAadhaar ? "Aadhaar numbers must contain no more than 12 digits." : undefined} />
         <div className="col-md-6">
           <label className="form-label" htmlFor={`${prefix}File`}>Identity document (optional, PDF/JPG/PNG, max 10 MB)</label>
           <input id={`${prefix}File`} type="file" className="form-control" accept=".pdf,.jpg,.jpeg,.png" onChange={event => setFile(event.target.files[0] || null)} />
@@ -45,7 +45,9 @@ function NewCoupleModal({ user, onClose, onSaved }) {
     const husband = { name: form.hName.trim(), idType: form.hType, idNumber: form.hNumber.trim() };
     const wife = { name: form.wName.trim(), idType: form.wType, idNumber: form.wNumber.trim() };
     if (!createdId) {
-      if (![husband, wife].some(person => person.idType === "Aadhaar" && person.idNumber)) return setError("Enter an Aadhaar number for at least one partner.");
+      if ([husband, wife].some(person => person.idType && !person.idNumber)) return setError("Enter the document number for each selected ID type.");
+      if ([husband, wife].some(person => person.idNumber && !person.idType)) return setError("Select the ID type for each entered document number.");
+      if (![husband, wife].some(person => person.idType && person.idNumber)) return setError("Enter an ID type and number for at least one partner.");
       if ([husband, wife].some(person => person.idType === "Aadhaar" && person.idNumber && !/^\d{1,12}$/.test(person.idNumber))) return setError("Aadhaar numbers must contain no more than 12 digits.");
     }
     setSaving(true);
@@ -78,7 +80,7 @@ function NewCoupleModal({ user, onClose, onSaved }) {
         <hr />
         <PartnerFields prefix="w" title="Partner two" form={form} setForm={setForm} setFile={setPartnerTwoFile} />
       </form>
-      <p className="small text-secondary mt-3 mb-0">At least one partner&apos;s Aadhaar number is required (up to 12 digits). Supporting identity files are optional and are stored privately if uploaded.</p>
+      <p className="small text-secondary mt-3 mb-0"><strong>At least one partner&apos;s ID is required</strong>: choose the ID type and enter its number (Aadhaar, passport, voter ID, driving licence or another approved ID). Aadhaar numbers are up to 12 digits and are stored masked. Uploading a scan of the ID is optional and stored privately.</p>
     </Modal>
   );
 }
@@ -124,38 +126,57 @@ function CoupleDetailModal({ couple, mayViewIdentity, onClose }) {
   );
 }
 
+// Letters, digits only, upper case: "a+101-2", "A101 2" and "A+101-2" all compare as "A1012".
+const compactVialId = value => String(value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+
 function MapVialModal({ couple, onClose, onSaved }) {
-  const [vials, setVials] = useState([]);
-  const [page, setPage] = useState({ skip: 0, hasMore: false, loading: true });
-  const [vialId, setVialId] = useState("");
-  const [status, setStatus] = useState("Loading eligible vials…");
+  const [query, setQuery] = useState("");
+  const [matches, setMatches] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [status, setStatus] = useState("Type the vial ID printed on the vial label.");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async (skip, existing) => {
-    setPage(current => ({ ...current, loading: true }));
-    setStatus("Loading eligible vials…");
+  // Searches only unused vials in this hospital's own stock, while the user types.
+  const search = useCallback(async text => {
+    const typed = text.trim();
+    if (compactVialId(typed).length < 2) {
+      setMatches([]);
+      setStatus("Type the vial ID printed on the vial label.");
+      return;
+    }
+    setSearching(true);
     try {
-      const result = await apiRequest(`/vials?${new URLSearchParams({ status: "UNUSED_AT_HOSPITAL", limit: "100", skip: String(skip) })}`);
-      const records = [...existing, ...(result.data || [])];
-      setVials(records);
-      setPage({ skip: result.pagination ? result.pagination.skip + (result.data || []).length : skip + (result.data || []).length, hasMore: Boolean(result.pagination?.hasMore), loading: false });
-      setStatus(records.length ? `${records.length} eligible vial${records.length === 1 ? "" : "s"} loaded.` : "No eligible vials are available for this hospital and centre.");
-    } catch (loadError) {
-      setPage(current => ({ ...current, hasMore: true, loading: false }));
-      setStatus(loadError.message || "Unable to load eligible vials. Try again.");
+      const result = await apiRequest(`/vials?${new URLSearchParams({ status: "UNUSED_AT_HOSPITAL", q: typed, limit: "20" })}`);
+      const found = result.data || [];
+      setMatches(found);
+      const exact = found.find(vial => compactVialId(vial.vialId) === compactVialId(typed));
+      if (exact) {
+        setSelected(exact);
+        setStatus(`Vial ${exact.vialId} found.`);
+      } else {
+        setStatus(found.length ? `${found.length} matching vial${found.length === 1 ? "" : "s"} in your unused stock. Select one below.` : "No unused vial in your stock matches this ID. Check the label and try again.");
+      }
+    } catch (searchError) {
+      setStatus(searchError.message || "Search failed. Try again.");
+    } finally {
+      setSearching(false);
     }
   }, []);
 
-  useEffect(() => { load(0, []); }, [load]);
+  useEffect(() => {
+    const timer = setTimeout(() => search(query), 300);
+    return () => clearTimeout(timer);
+  }, [query, search]);
 
   const submit = async event => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || !selected) return;
     setSaving(true);
     setError("");
     try {
-      await apiRequest("/mappings", { method: "POST", body: { coupleId: couple.coupleId, vialId } });
+      await apiRequest("/mappings", { method: "POST", body: { coupleId: couple.coupleId, vialId: selected.vialId } });
       onSaved();
     } catch (saveError) { setError(saveError.message); setSaving(false); }
   };
@@ -163,21 +184,43 @@ function MapVialModal({ couple, onClose, onSaved }) {
   return (
     <Modal title="Map vial to couple" onClose={onClose} footer={<>
       <button className="btn btn-light" type="button" onClick={onClose}>Cancel</button>
-      <button className="btn btn-primary" form="mapForm" disabled={!vialId || saving}>{saving ? "Saving…" : "Confirm mapping"}</button>
+      <button className="btn btn-primary" form="mapForm" disabled={!selected || saving}>{saving ? "Saving…" : selected ? `Map ${selected.vialId}` : "Confirm mapping"}</button>
     </>}>
       <Alert message={error} />
-      <div className="alert alert-info">Mapping records the selected vial against this couple and updates its status through the hospital-scoped API.</div>
       <form id="mapForm" onSubmit={submit}>
-        <div className="mb-3">
-          <label className="form-label" htmlFor="mapVialId">Available vial</label>
-          <select className="form-select" id="mapVialId" required disabled={!vials.length} value={vialId} onChange={event => setVialId(event.target.value)}>
-            <option value="">{vials.length ? "Select an eligible vial" : "Loading eligible vials…"}</option>
-            {vials.map(vial => <option key={vial.vialId} value={vial.vialId}>{[vial.vialId, vial.bloodGroup].filter(Boolean).join(" · ")}</option>)}
-          </select>
+        <label className="form-label" htmlFor="mapVialSearch">Vial ID <span className="text-danger">*</span></label>
+        <div className="map-vial-search">
+          <Icon name="upc-scan" />
+          <input id="mapVialSearch" className="form-control" autoComplete="off" autoFocus placeholder="Enter vial ID, e.g. A+101-2 or A1012" value={query}
+            onChange={event => { setQuery(event.target.value); setSelected(null); }} aria-describedby="mapVialStatus" />
         </div>
+        <div id="mapVialStatus" className="small text-secondary mt-2" aria-live="polite">{searching ? "Searching…" : status}</div>
+
+        {!selected && matches.length > 0 && (
+          <div className="map-vial-results" role="listbox" aria-label="Matching vials">
+            {matches.map(vial => (
+              <button key={vial.vialId} type="button" role="option" aria-selected="false" className="map-vial-option" onClick={() => { setSelected(vial); setQuery(vial.vialId); setStatus(`Vial ${vial.vialId} selected.`); }}>
+                <IdTag value={vial.vialId} icon="droplet-half" />
+                <span className="nl-pill nl-pill-blood">{vial.bloodGroup || "—"}</span>
+                <span className="text-secondary small">{vial.stockClassification === "KARYOTYPE_TESTED" ? "Karyotype tested" : "Normal stock"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selected && (
+          <div className="map-vial-selected">
+            <div className="d-flex flex-wrap align-items-center gap-2">
+              <Icon name="check-circle-fill" className="text-success" />
+              <IdTag value={selected.vialId} icon="droplet-half" />
+              <span className="nl-pill nl-pill-blood">{selected.bloodGroup || "—"}</span>
+              <span className="small text-secondary">{selected.stockClassification === "KARYOTYPE_TESTED" ? "Karyotype tested" : "Normal stock"}</span>
+            </div>
+            <div className="small mt-2">Will be mapped to case <strong>{couple.coupleId}</strong>.</div>
+          </div>
+        )}
       </form>
-      <div className="small text-secondary mb-2" aria-live="polite">{status}</div>
-      {page.hasMore && <button type="button" className="btn btn-sm btn-outline-primary" disabled={page.loading} onClick={() => load(page.skip, vials)}>Load more eligible vials</button>}
+      <div className="alert alert-warning small mt-3 mb-0"><Icon name="exclamation-triangle" className="me-1" />Once mapped, this vial is treated as used and cannot be returned to stock.</div>
     </Modal>
   );
 }

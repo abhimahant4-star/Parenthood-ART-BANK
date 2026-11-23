@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSession } from "@/components/SessionProvider";
 import { DataTable, Icon, LoadErrors, useLoader } from "@/components/ui";
 import { loadAll } from "@/lib/api";
+import { RecordActions, useRecordModals } from "@/components/RecordActions";
 import { VIAL_STATUS_LABELS, VIAL_STATUS_TONES, canOperateBank, compactId, normalizeBloodGroup } from "@/lib/format";
 
 function jobsFor(role) {
@@ -36,7 +37,9 @@ function Shortcut({ href, icon, title, text, primary }) {
 
 export default function DashboardPage() {
   const { user } = useSession();
-  const { data } = useLoader(() => loadAll(jobsFor(user.role)), [user.role]);
+  const { data, reload } = useLoader(() => loadAll(jobsFor(user.role)), [user.role]);
+  const superAdmin = user.role === "SUPER_ADMIN";
+  const records = useRecordModals(reload);
   const results = data?.results || {};
   const bank = canOperateBank(user), hospital = user.role === "HOSPITAL_USER", ceo = user.role === "CHAIN_CEO";
 
@@ -99,7 +102,7 @@ export default function DashboardPage() {
   const mixTotal = mix.reduce((sum, [, count]) => sum + count, 0);
 
   const hospitalName = id => hospitals.find(item => item.hospitalId === id)?.hospitalName || id || "—";
-  const columns = hospital ? ["Vial", "Blood group", "Current status"] : ceo ? ["Vial", "Hospital", "Centre", "Blood group", "Current status"] : ["Vial / batch", "Donor UHID", "Blood group", "Location", "Current status"];
+  const columns = hospital ? ["Vial", "Blood group", "Current status"] : ceo ? ["Vial", "Hospital", "Centre", "Blood group", "Current status"] : ["Vial / batch", "Donor UHID", "Blood group", "Location", "Current status", ...(superAdmin ? [""] : [])];
   const hour = new Date().getHours();
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
@@ -151,6 +154,7 @@ export default function DashboardPage() {
                     </>
                   )}
                   <td><VialStatus status={vial.status} /></td>
+                  {superAdmin && !hospital && !ceo && <td className="text-end"><RecordActions label={`vial ${vial.vialId}`} onEdit={() => records.open("editVial", vial)} onDelete={() => records.open("deleteVial", vial)} /></td>}
                 </tr>
               ))}
             </DataTable>
@@ -214,6 +218,7 @@ export default function DashboardPage() {
           })}
         </div>
       </section>
+      {records.element}
     </>
   );
 }

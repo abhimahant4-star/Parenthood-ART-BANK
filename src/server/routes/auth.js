@@ -10,6 +10,10 @@ const { withTransaction } = require("../services/transactionService");
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 const { requireAuth } = require("../middleware/auth");
 
+const MAX_FAILED_LOGINS = 3;
+const LOCK_MINUTES = 15;
+const lockedMessage = until => `This account is locked after ${MAX_FAILED_LOGINS} wrong passwords. Try again after ${until.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })} IST, or ask a Super Admin to unlock it.`;
+
 router.post("/logout", requireAuth, async (req, res) => {
   try {
     const loggedOut = await withTransaction(async session => {
@@ -48,6 +52,11 @@ router.post("/login", async (req, res) => {
       active: true
     });
 
+    // A locked account is refused before the password is checked.
+    if (user?.lockedUntil && user.lockedUntil > new Date()) {
+      return res.status(423).json({ success: false, message: lockedMessage(user.lockedUntil), errorCode: "ACCOUNT_LOCKED" });
+    }
+
     // Invalid login audit
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       await AuditLog.create({
@@ -59,6 +68,23 @@ router.post("/login", async (req, res) => {
         summary: "Invalid login attempt",
         ip: req.ip
       });
+
+      if (user) {
+        // Count the failure atomically; the third one in a row locks the account.
+        const counted = await User.findOneAndUpdate({ _id: user._id }, { $inc: { failedLoginAttempts: 1 } }, { new: true }).lean();
+        if (counted.failedLoginAttempts >= MAX_FAILED_LOGINS) {
+          const lockedUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
+          await User.updateOne({ _id: user._id }, { $set: { lockedUntil, failedLoginAttempts: 0 } });
+          await AuditLog.create({ userId: String(user._id), role: user.role, action: "ACCOUNT_LOCKED", entity: "AUTH", entityId: String(user._id), summary: "Account locked after failed logins", ip: req.ip });
+          return res.status(423).json({ success: false, message: lockedMessage(lockedUntil), errorCode: "ACCOUNT_LOCKED" });
+        }
+        const left = MAX_FAILED_LOGINS - counted.failedLoginAttempts;
+        return res.status(401).json({
+          success: false,
+          message: `Invalid credentials. ${left} attempt${left === 1 ? "" : "s"} left before this account is locked for ${LOCK_MINUTES} minutes.`,
+          errorCode: "INVALID_LOGIN"
+        });
+      }
 
       return res.status(401).json({
         success: false,
@@ -81,6 +107,8 @@ router.post("/login", async (req, res) => {
       if (typeof current.sessionVersion !== "number" || current.sessionVersion < 1) current.sessionVersion = 1;
       current.activeSessionId = sessionId;
       current.lastLoginAt = loginAt;
+      current.failedLoginAttempts = 0;
+      current.lockedUntil = undefined;
       await current.save({ session });
       if (hasActiveHospitalSession) {
         await recordOperationalEvent({ actorId: String(current._id), role: current.role, event: "SESSION_REPLACED", entityId: String(current._id), ip: req.ip, session });

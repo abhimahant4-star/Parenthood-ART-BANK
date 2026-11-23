@@ -47,7 +47,11 @@ const schema=new mongoose.Schema({
   // Transactional serialization key for named hospital/centre scope assignment.
   scopeRegistryVersion:{type:Number,default:0,select:false},
 
-  lastLoginAt:Date
+  lastLoginAt:Date,
+
+  // Login lockout: 3 wrong passwords in a row lock the account for a while.
+  failedLoginAttempts:{type:Number,default:0},
+  lockedUntil:Date
 
 },{timestamps:true});
 

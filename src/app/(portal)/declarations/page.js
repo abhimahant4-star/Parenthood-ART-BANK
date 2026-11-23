@@ -1,70 +1,110 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { AttachmentSlots, addSlot, newSlots } from "@/components/AttachmentSlots";
+import { useEffect, useRef, useState } from "react";
 import { DeclarationPreviewModal } from "@/components/DeclarationPaper";
 import { useSession } from "@/components/SessionProvider";
 import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadErrors, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest, loadAll } from "@/lib/api";
-import { canOperateBank, localDateTime, todayIso, validUploadFile } from "@/lib/format";
+import { canOperateBank, localDateTime, todayIso } from "@/lib/format";
 
-const DEFAULT_STATEMENT = "I confirm the approved patient, donor and mapped vial information are correct.";
 const extractRecords = result => result.data?.records || [];
+const compactId = value => String(value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+const maskDigits = mask => ((mask || "").length >= 12 ? { first: mask.slice(0, 2), last: mask.slice(-2) } : { first: "", last: "" });
 
-function linkedDonor(couple, vials, donors) {
-  const ids = new Set((couple?.mappedVialIds || []).map(id => vials.find(vial => vial.vialId === id)?.donorId).filter(Boolean));
-  return ids.size === 1 ? donors.find(donor => donor.donorId === [...ids][0]) || null : null;
-}
-
-function coupleDefaults(couple, vials, donors, current = {}) {
-  const mask = linkedDonor(couple, vials, donors)?.aadhaarMasked || "";
-  return {
-    patientName: current.patientName || couple?.wife?.name || couple?.husband?.name || "",
-    registrationId: current.registrationId || couple?.coupleId || "",
-    first: mask.length >= 12 ? mask.slice(0, 2) : "",
-    last: mask.length >= 12 ? mask.slice(-2) : ""
-  };
-}
-
-function NewDeclarationModal({ couples, vials, donors, signers, onClose, onSaved }) {
+// Step 1: staff type the donor ID. Step 2: only couple cases whose mapped vials all came from that donor are listed.
+function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
   const today = todayIso();
   const activeSigners = signers.filter(signer => signer.status === "ACTIVE");
-  const [form, setForm] = useState(() => ({
-    coupleId: couples[0].coupleId, patientAge: "", patientSex: "", referral: "", date: today, sampleDate: today, sampleId: "",
-    signerId: activeSigners[0]?.signerId || "", statement: DEFAULT_STATEMENT, ...coupleDefaults(couples[0], vials, donors)
-  }));
-  const [slots, setSlots] = useState(newSlots(1));
+  const [donorQuery, setDonorQuery] = useState("");
+  const [donorMatches, setDonorMatches] = useState([]);
+  const [donor, setDonor] = useState(null);
+  const [linkedCases, setLinkedCases] = useState([]);
+  const [lookup, setLookup] = useState({ busy: false, message: "Type the donor ID, e.g. AB/6283 or AB6283." });
+  const [form, setForm] = useState({ coupleId: "", patientName: "", registrationId: "", date: today, sampleDate: today, signerId: activeSigners[0]?.signerId || "", first: "", last: "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [savedId, setSavedId] = useState("");
   const [preview, setPreview] = useState(null);
   const formRef = useRef(null);
 
-  const couple = couples.find(item => item.coupleId === form.coupleId);
-  const donor = linkedDonor(couple, vials, donors);
+  const couple = linkedCases.find(item => item.coupleId === form.coupleId);
   const maskLocked = (donor?.aadhaarMasked || "").length >= 12;
-
-  const chooseCouple = value => {
-    const selected = couples.find(item => item.coupleId === value);
-    setForm(current => ({ ...current, ...coupleDefaults(selected, vials, donors, current) }));
-    return value;
-  };
   const digits = value => value.replace(/\D/g, "").slice(0, 2);
 
+  const fillFromCase = selected => setForm(current => ({
+    ...current, coupleId: selected?.coupleId || "",
+    patientName: selected?.wife?.name || selected?.husband?.name || "", registrationId: selected?.coupleId || ""
+  }));
+
+  // Loads the donor's vials and keeps only cases whose mapped vials all belong to this donor.
+  const chooseDonor = async chosen => {
+    setDonor(chosen);
+    setDonorMatches([]);
+    setDonorQuery(chosen.manualDonorId || chosen.uhid || chosen.donorId);
+    setForm(current => ({ ...current, ...maskDigits(chosen.aadhaarMasked) }));
+    setLookup({ busy: true, message: "Finding couple cases linked to this donor…" });
+    try {
+      const donorVials = (await apiRequest(`/vials?${new URLSearchParams({ donorId: chosen.donorId, limit: "500" })}`)).data || [];
+      const donorVialIds = new Set(donorVials.map(vial => vial.vialId));
+      const cases = couples.filter(item => item.mappedVialIds?.length && item.mappedVialIds.every(id => donorVialIds.has(id)));
+      setLinkedCases(cases);
+      fillFromCase(cases[0]);
+      setLookup({ busy: false, message: cases.length ? `${cases.length} couple case${cases.length === 1 ? "" : "s"} linked to this donor.` : "No couple case has vials mapped from this donor yet." });
+    } catch (lookupError) {
+      setLinkedCases([]);
+      setLookup({ busy: false, message: lookupError.message || "Could not load the donor's cases. Try again." });
+    }
+  };
+
+  useEffect(() => {
+    const typed = donorQuery.trim();
+    if (donor && compactId(typed) === compactId(donor.manualDonorId || donor.uhid || donor.donorId)) return undefined;
+    if (compactId(typed).length < 2) {
+      setDonorMatches([]);
+      return undefined;
+    }
+    const timer = setTimeout(async () => {
+      setLookup({ busy: true, message: "Searching donors…" });
+      try {
+        const found = (await apiRequest(`/donors?${new URLSearchParams({ q: typed, limit: "10" })}`)).data || [];
+        const exact = found.filter(item => [item.manualDonorId, item.uhid, item.unitNumber].some(id => id && compactId(id) === compactId(typed)));
+        if (exact.length === 1) return chooseDonor(exact[0]);
+        setDonorMatches(found);
+        setLookup({ busy: false, message: found.length ? "Select the donor below." : "No donor matches this ID." });
+      } catch (searchError) {
+        setLookup({ busy: false, message: searchError.message || "Search failed. Try again." });
+      }
+      return undefined;
+    }, 300);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [donorQuery]);
+
+  const changeDonorQuery = value => {
+    setDonorQuery(value);
+    setDonor(null);
+    setLinkedCases([]);
+    fillFromCase(null);
+  };
+
   const buildData = () => ({
-    date: form.date, sampleDate: form.sampleDate, patientName: form.patientName.trim(),
-    patientAge: form.patientAge !== "" ? Number(form.patientAge) : "", patientSex: form.patientSex,
-    referral: form.referral.trim(), registrationId: form.registrationId.trim(), sampleId: form.sampleId.trim(),
-    vials: couple.mappedVialIds, donor: donor?.donorId, aadhaarMasked: `${form.first}••••••••${form.last}`,
-    signerId: form.signerId, statement: form.statement
+    date: form.date, sampleDate: form.sampleDate, patientName: form.patientName.trim(), registrationId: form.registrationId.trim(),
+    vials: couple.mappedVialIds, donor: donor.donorId, aadhaarMasked: `${form.first}••••••••${form.last}`, signerId: form.signerId
   });
 
+  const check = () => {
+    if (!donor) return "Search for and select the donor first.";
+    if (!couple) return "Select a couple case linked to this donor.";
+    if (!formRef.current.reportValidity()) return "skip";
+    if (!/^\d{2}$/.test(form.first) || !/^\d{2}$/.test(form.last)) return "Enter exactly two Aadhaar digits at each end. Never enter the full Aadhaar number.";
+    return "";
+  };
+
   const showPreview = () => {
-    if (!formRef.current.reportValidity()) return;
-    if (!/^\d{2}$/.test(form.first) || !/^\d{2}$/.test(form.last)) return setError("Enter exactly two digits at each end. Never enter the full Aadhaar number.");
+    const problem = check();
+    if (problem) return problem === "skip" ? undefined : setError(problem);
     setError("");
     setPreview({
-      declaration: { declarationId: "PREVIEW", coupleId: couple.coupleId, hospitalId: couple.hospitalId, centreId: couple.centreId, vialIds: couple.mappedVialIds, declarationData: { ...buildData(), aadhaarMasked: donor?.aadhaarMasked || "", sampleId: form.sampleId || "Preview sample ID" } },
+      declaration: { declarationId: "PREVIEW", coupleId: couple.coupleId, hospitalId: couple.hospitalId, centreId: couple.centreId, vialIds: couple.mappedVialIds, declarationData: { ...buildData(), aadhaarMasked: donor.aadhaarMasked || "" } },
       couple, donor, signer: signers.find(item => item.signerId === form.signerId)
     });
   };
@@ -72,27 +112,12 @@ function NewDeclarationModal({ couples, vials, donors, signers, onClose, onSaved
   const submit = async event => {
     event.preventDefault();
     if (saving) return;
-    if (savedId) return setError("This declaration was already saved. Do not submit it again; upload the supporting documents from the Documents page.");
+    const problem = check();
+    if (problem) return problem === "skip" ? undefined : setError(problem);
     setError("");
-    if (!/^\d{2}$/.test(form.first) || !/^\d{2}$/.test(form.last)) return setError("Enter exactly two Aadhaar digits at each end.");
-    if (!couple?.mappedVialIds?.length || !donor) return setError("A declaration needs mapped vials from one donor.");
-    const chosen = slots.filter(slot => slot.file);
-    if (chosen.some(slot => !validUploadFile(slot.file))) return setError("Each supporting document must be PDF, JPG or PNG and no larger than 10 MB.");
     setSaving(true);
     try {
-      const created = await apiRequest("/declarations", { method: "POST", body: { coupleId: couple.coupleId, declarationType: "ART_BANK", confirmations: { detailsVerified: true }, declarationData: buildData() } });
-      if (chosen.length) {
-        const formData = new FormData();
-        formData.append("metadata", JSON.stringify({ hospitalId: "ART_BANK", centreId: "ART_BANK", relatedId: donor.donorId, category: "DONOR_DOCUMENT", label: `Declaration ${created.data.declarationId} supporting documents`, fileLabels: chosen.map(slot => slot.label.trim()) }));
-        chosen.forEach(slot => formData.append("files", slot.file));
-        try {
-          await apiRequest("/attachments", { method: "POST", formData });
-        } catch (uploadError) {
-          setSavedId(created.data.declarationId);
-          setSaving(false);
-          return setError(`Declaration ${created.data.declarationId} was saved, but supporting document upload failed. Do not create the declaration again; upload the documents from the Documents page. ${uploadError.message}`);
-        }
-      }
+      await apiRequest("/declarations", { method: "POST", body: { coupleId: couple.coupleId, declarationType: "ART_BANK", confirmations: { detailsVerified: true }, declarationData: buildData() } });
       onSaved();
     } catch (saveError) { setError(saveError.message); setSaving(false); }
   };
@@ -100,81 +125,68 @@ function NewDeclarationModal({ couples, vials, donors, signers, onClose, onSaved
   const fieldProps = { form, setForm };
   return (
     <>
-      <Modal title="Create declaration" className={preview ? "d-none" : ""} onClose={preview ? undefined : (savedId ? onSaved : onClose)} footer={<>
-        <button className="btn btn-light" type="button" onClick={savedId ? onSaved : onClose}>Cancel</button>
+      <Modal title="Create declaration" className={preview ? "d-none" : ""} onClose={preview ? undefined : onClose} footer={<>
+        <button className="btn btn-light" type="button" onClick={onClose}>Cancel</button>
         <button className="btn btn-outline-primary" type="button" onClick={showPreview}>Preview</button>
-        <button className="btn btn-primary" form="declarationForm" disabled={saving || Boolean(savedId)}>{savedId ? "Declaration saved" : saving ? "Saving…" : "Save draft"}</button>
+        <button className="btn btn-primary" form="declarationForm" disabled={saving || !couple}>{saving ? "Saving…" : "Save draft"}</button>
       </>}>
         <Alert message={error} />
         <form id="declarationForm" ref={formRef} className="row g-3" onSubmit={submit}>
-          <Field {...fieldProps} label="Couple case" name="coupleId" required onValue={chooseCouple} choices={couples.map(item => ({ value: item.coupleId, label: `${item.coupleId} · ${item.hospitalId}` }))} />
-          <div className="col-md-6"><label className="form-label" htmlFor="decDonorNumber">Donor Number</label><input id="decDonorNumber" className="form-control" readOnly placeholder="Set from the selected couple's mapped donor" value={donor ? donor.manualDonorId || donor.uhid || donor.donorId : ""} /></div>
-          <div className="col-12 alert alert-light border mb-0">{donor ? `Linked donor: ${donor.uhid || donor.donorId} · ${donor.name} · ${donor.aadhaarMasked || "Aadhaar mask unavailable for this existing record"}` : "Linked donor details are unavailable. Confirm the couple has mapped vials from one donor."}</div>
-          <Field {...fieldProps} label="Patient name" name="patientName" required />
-          <Field {...fieldProps} label="Patient age (years)" name="patientAge" type="number" required min={0} max={120} step={1} />
-          <Field {...fieldProps} label="Patient sex" name="patientSex" choices={[{ value: "", label: "Select sex" }, "Female", "Male", "Other"]} />
-          <Field {...fieldProps} label="Referral" name="referral" />
-          <Field {...fieldProps} label="Registration ID" name="registrationId" required />
-          <Field {...fieldProps} label="Report date" name="date" type="date" required />
-          <Field {...fieldProps} label="Sample date" name="sampleDate" type="date" required />
-          <Field {...fieldProps} label="Sample ID" name="sampleId" />
-          <Field {...fieldProps} label="Donor Aadhaar first two digits" name="first" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
-          <Field {...fieldProps} label="Donor Aadhaar last two digits" name="last" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
-          <Field {...fieldProps} label="Authorised signatory" name="signerId" required choices={activeSigners.length ? activeSigners.map(signer => ({ value: signer.signerId, label: `${signer.name} · ${signer.designation} · v${signer.version}` })) : [{ value: "", label: "No active signatory available" }]} />
           <div className="col-12">
-            <div className="d-flex justify-content-between align-items-center mb-2">
-              <strong>Donor documents (optional)</strong>
-              <button className="btn btn-sm btn-outline-primary" type="button" onClick={() => addSlot(slots, setSlots, () => setError("A declaration can contain up to 5 supporting documents."))}>Add document</button>
+            <label className="form-label" htmlFor="decDonorSearch">Donor ID <span className="text-danger">*</span></label>
+            <div className="map-vial-search">
+              <Icon name="search" />
+              <input id="decDonorSearch" className="form-control" autoComplete="off" autoFocus placeholder="Enter the donor ID, e.g. AB/6283 or AB6283" value={donorQuery} onChange={event => changeDonorQuery(event.target.value)} />
             </div>
-            <AttachmentSlots slots={slots} setSlots={setSlots} labelTitle="Document label" placeholder="e.g. Blood report or affidavit" />
-            <div className="form-text">Documents are saved against this declaration&apos;s donor ID and can be accessed from that donor&apos;s record.</div>
+            <div className="small text-secondary mt-2" aria-live="polite">{lookup.message}</div>
+            {!donor && donorMatches.length > 0 && (
+              <div className="map-vial-results" role="listbox" aria-label="Matching donors">
+                {donorMatches.map(item => (
+                  <button key={item.donorId} type="button" role="option" aria-selected="false" className="map-vial-option" onClick={() => chooseDonor(item)}>
+                    <span className="nl-donor-id"><Icon name="lock-fill" />{item.manualDonorId || "—"}</span>
+                    <IdTag value={item.uhid || item.donorId} icon="fingerprint" tone="slate" />
+                    <span className="small">{item.name}</span>
+                    <span className="nl-pill nl-pill-blood">{item.bloodGroup || "—"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {donor && (
+              <div className="map-vial-selected d-flex flex-wrap align-items-center gap-2">
+                <Icon name="check-circle-fill" className="text-success" />
+                <span className="nl-donor-id"><Icon name="lock-fill" />{donor.manualDonorId || "—"}</span>
+                <IdTag value={donor.uhid || donor.donorId} icon="fingerprint" tone="slate" />
+                <span className="small fw-semibold">{donor.name}</span>
+                <span className="nl-pill nl-pill-blood">{donor.bloodGroup || "—"}</span>
+                <span className="small text-secondary">Aadhaar {donor.aadhaarMasked || "not recorded"}</span>
+              </div>
+            )}
           </div>
-          <div className="col-12">
-            <label className="form-label" htmlFor="decStatement">Declaration statement</label>
-            <textarea id="decStatement" className="form-control" rows={3} required value={form.statement} onChange={event => setForm(current => ({ ...current, statement: event.target.value }))} />
-          </div>
+          {donor && (
+            <>
+              <Field {...fieldProps} label="Couple case linked to this donor" name="coupleId" required disabled={!linkedCases.length}
+                onValue={value => { fillFromCase(linkedCases.find(item => item.coupleId === value)); return value; }}
+                choices={linkedCases.length ? linkedCases.map(item => ({ value: item.coupleId, label: `${item.coupleId} · ${item.hospitalId} · ${(item.mappedVialIds || []).join(", ")}` })) : [{ value: "", label: "No linked case" }]} />
+              <Field {...fieldProps} label="Patient name" name="patientName" required />
+              <Field {...fieldProps} label="Registration ID" name="registrationId" required />
+              <Field {...fieldProps} label="Report date" name="date" type="date" required />
+              <Field {...fieldProps} label="Sample date" name="sampleDate" type="date" required />
+              <Field {...fieldProps} label="Authorised signatory" name="signerId" required choices={activeSigners.length ? activeSigners.map(signer => ({ value: signer.signerId, label: `${signer.name} · ${signer.designation} · v${signer.version}` })) : [{ value: "", label: "No active signatory available" }]} />
+              <Field {...fieldProps} label="Donor Aadhaar first two digits" name="first" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
+              <Field {...fieldProps} label="Donor Aadhaar last two digits" name="last" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
+            </>
+          )}
         </form>
-        <div className="alert alert-info mt-3 mb-0">Enter the patient&apos;s verified age in years and the actual sample collection date. The sample date starts as today and can be changed. The donor number is derived from the donor linked to the couple&apos;s mapped vials. Enter only the first two and last two Aadhaar digits.</div>
       </Modal>
       {preview && <DeclarationPreviewModal {...preview} onClose={() => setPreview(null)} />}
     </>
   );
 }
 
-function ReportDetailsModal({ declaration, onClose, onSaved }) {
-  const data = declaration.declarationData || {};
-  const [form, setForm] = useState({ patientAge: data.patientAge ?? "", sampleDate: data.sampleDate || "" });
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const submit = async event => {
-    event.preventDefault();
-    if (saving) return;
-    setSaving(true);
-    setError("");
-    try {
-      await apiRequest(`/declarations/${encodeURIComponent(declaration.declarationId)}/draft-report-details`, { method: "PATCH", body: { patientAge: Number(form.patientAge), sampleDate: form.sampleDate } });
-      onSaved();
-    } catch (saveError) { setError(saveError.message || "Could not save declaration report details."); setSaving(false); }
-  };
-  return (
-    <Modal title="Complete declaration report details" onClose={onClose} footer={<>
-      <button className="btn btn-light" type="button" onClick={onClose}>Cancel</button>
-      <button className="btn btn-primary" form="reportDetailsForm" disabled={saving}>{saving ? "Saving…" : "Save details"}</button>
-    </>}>
-      <Alert message={error} />
-      <form id="reportDetailsForm" className="row g-3" onSubmit={submit}>
-        <Field form={form} setForm={setForm} label="Patient age (years)" name="patientAge" type="number" required min={0} max={120} step={1} />
-        <Field form={form} setForm={setForm} label="Sample date" name="sampleDate" type="date" required />
-      </form>
-      <div className="alert alert-info mt-3 mb-0">Enter the verified patient age and actual sample collection date. These details will be saved to this draft report; they are not inferred from donor information.</div>
-    </Modal>
-  );
-}
-
 function CorrectionRequestModal({ declaration, revisionOf, onClose, onSaved }) {
   const data = declaration.declarationData || {};
   const prior = Object.fromEntries((revisionOf?.proposedChanges || []).map(change => [change.field, change.value]));
-  const [form, setForm] = useState({ date: prior.date ?? data.date ?? "", statement: prior.statement ?? data.statement ?? "", reason: "" });
+  const [form, setForm] = useState({ date: prior.date ?? data.date ?? "", reason: "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -184,8 +196,7 @@ function CorrectionRequestModal({ declaration, revisionOf, onClose, onSaved }) {
     setError("");
     const proposedChanges = [];
     if (form.date && form.date !== data.date) proposedChanges.push({ field: "date", value: form.date });
-    if (form.statement.trim() && form.statement !== data.statement) proposedChanges.push({ field: "statement", value: form.statement });
-    if (!proposedChanges.length) return setError("Change the report date or statement before submitting a correction.");
+    if (!proposedChanges.length) return setError("Change the report date before submitting a correction.");
     setSaving(true);
     const id = encodeURIComponent(declaration.declarationId);
     const path = revisionOf ? `/declarations/${id}/correction-requests/${encodeURIComponent(revisionOf.requestId)}/resubmit` : `/declarations/${id}/correction-requests`;
@@ -204,10 +215,9 @@ function CorrectionRequestModal({ declaration, revisionOf, onClose, onSaved }) {
       {revisionOf?.reviewReason && <div className="alert alert-warning">Reviewer note: {revisionOf.reviewReason}</div>}
       <form id="correctionForm" className="row g-3" onSubmit={submit}>
         <Field form={form} setForm={setForm} label="Report date" name="date" type="date" />
-        <div className="col-12"><label className="form-label" htmlFor="correctionStatement">Declaration statement</label><textarea id="correctionStatement" className="form-control" rows={3} value={form.statement} onChange={event => setForm(current => ({ ...current, statement: event.target.value }))} /></div>
         <div className="col-12"><label className="form-label" htmlFor="correctionReason">Reason for correction</label><textarea id="correctionReason" className="form-control" rows={2} required value={form.reason} onChange={event => setForm(current => ({ ...current, reason: event.target.value }))} /></div>
       </form>
-      <p className="small text-secondary mt-3 mb-0">Only the report date and statement can be corrected. ART Bank reviews every request before a new declaration version is created.</p>
+      <p className="small text-secondary mt-3 mb-0">Only the report date can be corrected. ART Bank reviews every request before a new declaration version is created.</p>
     </Modal>
   );
 }
@@ -278,7 +288,6 @@ export default function DeclarationsPage() {
     setMessage(null);
     const id = encodeURIComponent(declaration.declarationId);
     if (action === "preview") return preview(declaration);
-    if (action === "details") return setModal({ type: "details", declaration });
     if (action === "request") return setModal({ type: "request", declaration });
     if (action === "correct") {
       const pending = requests.find(item => item.declarationId === declaration.declarationId && item.status === "PENDING_REVIEW");
@@ -305,10 +314,8 @@ export default function DeclarationsPage() {
         <DataTable headers={["Declaration", "Donor ID", "Hospital", "Vials", "Version", "Status", "Action"]} empty={list.loading ? "Loading declarations…" : list.error ? "Declaration records could not be loaded. Retry before treating this list as empty." : "No declarations yet"}>
           {list.records.map(declaration => {
             const data = declaration.declarationData || {};
-            const missingDetails = data.patientAge === undefined || data.patientAge === null || data.patientAge === "" || !data.sampleDate;
             const options = [
               ["preview", "Preview"],
-              ...(bank && declaration.status === "DRAFT" && missingDetails ? [["details", "Add age / date"]] : []),
               ...(bank && ["DRAFT", "SUBMITTED"].includes(declaration.status) ? [["correct", "Correct"]] : []),
               ...(bank && declaration.status === "DRAFT" ? [["submit", "Submit"]] : []),
               ...(bank && declaration.status === "SUBMITTED" ? [["unsubmit", "Unsubmit"]] : []),
@@ -359,9 +366,8 @@ export default function DeclarationsPage() {
           <LoadMore list={corrections} label="correction requests" />
         </div>
       )}
-      {modal?.type === "new" && <NewDeclarationModal couples={modal.couples} vials={vials} donors={donors} signers={signers} onClose={() => setModal(null)} onSaved={finish} />}
+      {modal?.type === "new" && <NewDeclarationModal couples={modal.couples} signers={signers} onClose={() => setModal(null)} onSaved={finish} />}
       {modal?.type === "preview" && <DeclarationPreviewModal {...modal.paper} onClose={() => setModal(null)} />}
-      {modal?.type === "details" && <ReportDetailsModal declaration={modal.declaration} onClose={() => setModal(null)} onSaved={finish} />}
       {modal?.type === "request" && <CorrectionRequestModal declaration={modal.declaration} revisionOf={modal.revisionOf} onClose={() => setModal(null)} onSaved={finish} />}
       {modal?.type === "review" && <ReviewCorrectionModal request={modal.request} onClose={() => setModal(null)} onSaved={finish} />}
     </>

@@ -137,6 +137,20 @@ router.post(
             errorCode: "IDENTITY_TYPE_REQUIRED"
           });
         }
+        if (person.idType && !person.idNumber) {
+          return res.status(400).json({
+            success: false,
+            message: "Enter the document number for each selected ID type",
+            errorCode: "IDENTITY_NUMBER_REQUIRED"
+          });
+        }
+        if (person.idNumber.length > 160) {
+          return res.status(400).json({
+            success: false,
+            message: "Identity document numbers must be 160 characters or fewer",
+            errorCode: "INVALID_IDENTITY_NUMBER"
+          });
+        }
         if (person.idType === "Aadhaar" && person.idNumber && !/^\d{1,12}$/.test(person.idNumber)) {
           return res.status(400).json({
             success: false,
@@ -145,11 +159,12 @@ router.post(
           });
         }
       }
-      if (!Object.values(partners).some(person => person.idType === "Aadhaar" && person.idNumber)) {
+      // At least one partner must give an ID (any approved type). Aadhaar numbers are still stored masked and hashed.
+      if (!Object.values(partners).some(person => person.idType && person.idNumber)) {
         return res.status(400).json({
           success: false,
-          message: "At least one partner's Aadhaar number is required",
-          errorCode: "AADHAAR_REQUIRED"
+          message: "Enter an ID type and number for at least one partner",
+          errorCode: "IDENTITY_REQUIRED"
         });
       }
 

@@ -18,10 +18,7 @@ export function DeclarationPaper({ declaration, couple, donor, signer }) {
   const data = declaration.declarationData || {};
   const vials = declaration.vialIds || data.vials || [];
   const donorNumber = data.donorNumber || donor?.manualDonorId || donor?.uhid || donor?.donorId || data.donor || "—";
-  const sampleId = data.sampleId || declaration.declarationId || "—";
   const patientName = data.patientName || couple?.wife?.name || "—";
-  const hasAge = data.patientAge !== undefined && data.patientAge !== null && data.patientAge !== "";
-  const ageSex = hasAge ? `${data.patientAge} Year(s)${data.patientSex ? ` (${data.patientSex})` : ""}` : "Not provided";
   const trait = key => data[key] || donor?.[key] || "—";
 
   return (
@@ -29,20 +26,11 @@ export function DeclarationPaper({ declaration, couple, donor, signer }) {
       <header className="declaration-report-header">
         <div className="declaration-report-header-left">
           <p>Patient Name : <strong>{patientName}</strong></p>
-          <p>Referral : {data.referral || "—"}</p>
           <p>Sample Date : {dateLabel(data.sampleDate)}</p>
         </div>
         <div className="declaration-report-header-right">
-          <p>Age : {ageSex}</p>
           <p>Reg. ID : I - {data.registrationId || declaration.coupleId || "—"}</p>
           <p>Report Date : {dateLabel(data.date)}</p>
-          <div className="declaration-report-sample-id">
-            <span>Sample ID :</span>
-            <span className="declaration-barcode" aria-label={`Sample ID ${sampleId}`}>
-              <span className="declaration-barcode-bars" aria-hidden="true" />
-              <span>{sampleId}</span>
-            </span>
-          </div>
         </div>
       </header>
       <h4 className="declaration-report-title">{data.bankName || "PARENTHOOD ART BANK"}: ART BANK REGD NO: {data.bankRegistrationNumber || "—"}</h4>
@@ -75,7 +63,6 @@ export function DeclarationPaper({ declaration, couple, donor, signer }) {
         </table>
       </div>
       <p className="declaration-report-vials"><strong>Mapped vial ID(s):</strong> {vials.join(", ") || "—"}</p>
-      <p className="declaration-statement">{data.statement || "I confirm that the patient, donor and mapped vial details above are correct."}</p>
       <div className="declaration-report-notes">
         <p>● All the Donor samples are morphologically analyzed (Kruger&apos;s criteria), DNA Fragmentation Tested,</p>
         <p>processed with IVF grade Density Gradient with minimum 30 million sperm concentration/ml AND</p>
@@ -99,7 +86,7 @@ export function DeclarationPreviewModal({ onClose, ...paper }) {
       <button className="btn btn-outline-primary" type="button" onClick={() => window.print()}>Print</button>
     </>}>
       <DeclarationPaper {...paper} />
-      <p className="declaration-preview-note">Preview only. Confirm report values, clinical statements, and registration details before issuing.</p>
+      <p className="declaration-preview-note">Preview only. Confirm the patient, donor, vial and registration details before issuing.</p>
     </Modal>
   );
 }

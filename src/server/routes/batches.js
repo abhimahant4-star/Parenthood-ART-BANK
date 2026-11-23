@@ -6,6 +6,7 @@ const Vial = require("../models/Vial");
 const Donor = require("../models/Donor");
 const IdSequence = require("../models/IdSequence");
 const { flexibleIdPattern } = require("../utils/flexibleSearch");
+const { deleteBatch, updateBatch } = require("../services/recordAdminService");
 const { withTransaction, RouteError, sendRouteError } = require("../services/transactionService");
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 const { parseCollectionDate, addCalendarMonths, nextCollectionDate, isAtOrAfterDate, isQuarantineComplete, formatBatchId, makeVialIds } = require("../services/batchRules");
@@ -280,5 +281,24 @@ router.post(
   }
 );
 
+// Super Admin: change a batch's stock type, notes, or (while quarantined) its collection date.
+router.put("/:batchId", requireAuth, allowRoles("SUPER_ADMIN"), async (req, res) => {
+  try {
+    const batch = await withTransaction(session => updateBatch(req, req.params.batchId, req.body || {}, session));
+    return res.json({ success: true, message: "Batch updated", data: batch });
+  } catch (error) {
+    return sendRouteError(res, error, { message: "Failed to update batch", errorCode: "BATCH_UPDATE_ERROR" });
+  }
+});
+
+// Super Admin: delete a batch and its vials, only while none of the vials has left the ART Bank.
+router.delete("/:batchId", requireAuth, allowRoles("SUPER_ADMIN"), async (req, res) => {
+  try {
+    const result = await withTransaction(session => deleteBatch(req, req.params.batchId, session));
+    return res.json({ success: true, message: "Batch deleted", data: result });
+  } catch (error) {
+    return sendRouteError(res, error, { message: "Failed to delete batch", errorCode: "BATCH_DELETE_ERROR" });
+  }
+});
 
 module.exports = router;
