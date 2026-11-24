@@ -102,7 +102,7 @@ export default function DashboardPage() {
   const mixTotal = mix.reduce((sum, [, count]) => sum + count, 0);
 
   const hospitalName = id => hospitals.find(item => item.hospitalId === id)?.hospitalName || id || "—";
-  const columns = hospital ? ["Vial", "Blood group", "Current status"] : ceo ? ["Vial", "Hospital", "Centre", "Blood group", "Current status"] : ["Vial / batch", "Donor UHID", "Blood group", "Location", "Current status", ...(superAdmin ? [""] : [])];
+  const columns = hospital ? ["Vial", "Blood group", "Current status"] : ceo ? ["Vial", "Hospital", "Centre", "Blood group", "Current status"] : ["Vial / batch", "Donor UHID", "Blood group", "Location", "Current status", ...(superAdmin ? ["Action"] : [])];
   const hour = new Date().getHours();
   const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 

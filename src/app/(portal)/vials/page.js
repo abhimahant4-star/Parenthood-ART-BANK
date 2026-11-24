@@ -26,6 +26,11 @@ function CompactId({ value, kind }) {
   );
 }
 
+const calendarDate = value => {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(undefined, { timeZone: "UTC", day: "2-digit", month: "short", year: "numeric" }) : "";
+};
+
 // Movement history: Super Admin only (the server sends it to no other role).
 function VialHistoryModal({ vial, onClose }) {
   const details = [["Vial ID", vial.vialId], ["Donor UHID", vial.donorUhid || vial.donorId], ["Batch ID", vial.batchId], ["Current location", vial.currentLocation], ["Status", statusLabel(vial.status)]];
@@ -42,11 +47,16 @@ function VialHistoryModal({ vial, onClose }) {
       <ul className="vial-history-timeline" aria-label="Vial status events">
         {history.length ? history.map((event, index) => {
           const valid = event.at && !Number.isNaN(new Date(event.at).getTime());
+          // Quarantine dates are calendar days (stored as UTC midnight), so show the date only.
+          const quarantine = event.status === "QUARANTINED";
+          const when = !valid ? "Time unavailable" : quarantine
+            ? `From ${calendarDate(event.at)}${calendarDate(event.quarantineEnd) ? ` to ${calendarDate(event.quarantineEnd)}` : ""}`
+            : new Date(event.at).toLocaleString();
           return (
             <li className="vial-history-event" key={`${event.status}-${index}`}>
               <div className="vial-history-event-status"><Badge status={event.status} /></div>
               <div className="vial-history-event-meta">
-                <time>{valid ? new Date(event.at).toLocaleString() : "Time unavailable"}</time>
+                <time>{when}</time>
                 <span>{event.user || event.by || event.dispatchedBy || event.receivedBy || "system"}</span>
                 {event.coupleId && <span>Case {event.coupleId}</span>}
                 {event.orderId && <span>Order {event.orderId}</span>}

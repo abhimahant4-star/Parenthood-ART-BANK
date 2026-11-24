@@ -10,12 +10,15 @@ const User = require("../models/User");
 const Batch = require("../models/Batch");
 const Donor = require("../models/Donor");
 const Vial = require("../models/Vial");
+const DocumentType = require("../models/DocumentType");
 const { withTransaction, RouteError } = require("../services/transactionService");
 const { recordOperationalEvent } = require("../services/operationalAuditService");
 const { applyStaffAttachmentScope, applyHospitalAttachmentVisibility, applyAttachmentQueryFilters } = require("../services/attachmentPrivacyService");
 
 const BANK_ROLES = ["SUPER_ADMIN", "ART_BANK_ADMIN", "ART_BANK_STAFF"];
 const ALL_ROLES = [...BANK_ROLES, "HOSPITAL_USER"];
+const DEFAULT_DONOR_DOCUMENT_TYPES = ["Aadhar Card", "Blood Reports", "Declaration & Affidavits"];
+const documentTypeKey = name => String(name || "").trim().replace(/\s+/g, " ").toLowerCase();
 const publicFile = file => ({ fileId: file.fileId, originalName: file.originalName, label: file.label, mimeType: file.mimeType, size: file.size });
 const publicPackage = record => ({ ...record.toObject(), files: record.files.map(publicFile) });
 
@@ -50,6 +53,28 @@ router.get("/", requireAuth, allowRoles(...ALL_ROLES), async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch attachments", errorCode: "ATTACHMENTS_FETCH_ERROR" });
   }
 });
+
+// Built-in donor document types followed by the ones staff have created.
+router.get("/document-types", requireAuth, allowRoles(...BANK_ROLES), async (req, res) => {
+  try {
+    const saved = await DocumentType.find({}).sort({ name: 1 }).select("name key").lean();
+    const builtIn = new Set(DEFAULT_DONOR_DOCUMENT_TYPES.map(documentTypeKey));
+    res.json({ success: true, data: { defaults: DEFAULT_DONOR_DOCUMENT_TYPES, custom: saved.filter(item => !builtIn.has(item.key)).map(item => item.name) } });
+  } catch {
+    res.status(500).json({ success: false, message: "Failed to load document types", errorCode: "DOCUMENT_TYPES_FETCH_ERROR" });
+  }
+});
+
+async function rememberDocumentTypes(labels, username) {
+  const builtIn = new Set(DEFAULT_DONOR_DOCUMENT_TYPES.map(documentTypeKey));
+  const fresh = new Map();
+  for (const label of labels) {
+    const name = String(label || "").trim().replace(/\s+/g, " ").slice(0, 120);
+    const key = documentTypeKey(name);
+    if (name && !builtIn.has(key)) fresh.set(key, name);
+  }
+  await Promise.all([...fresh].map(([key, name]) => DocumentType.updateOne({ key }, { $setOnInsert: { key, name, createdBy: username } }, { upsert: true })));
+}
 
 router.post("/", requireAuth, allowRoles(...ALL_ROLES), (req, res, next) => {
   upload.array("files", 5)(req, res, async error => {
@@ -116,6 +141,9 @@ router.post("/", requireAuth, allowRoles(...ALL_ROLES), (req, res, next) => {
       await recordOperationalEvent({ actorId: String(req.user.id), role: req.user.role, event: "ATTACHMENT_UPLOADED", entityId: attachmentId, metadata: { attachmentId, hospitalId, centreId, category, relatedId, count: files.length }, ip: req.ip, session });
       return created;
     });
+    if (category === "DONOR_DOCUMENT") {
+      await rememberDocumentTypes(files.map(file => file.label), req.user.username).catch(error => console.error("Saving document types failed", { errorName: error?.name }));
+    }
     res.status(201).json({ success: true, data: publicPackage(record) });
   } catch (error) {
     await Promise.all(storedFiles.map(file => deletePrivateFile(file).catch(() => {})));

@@ -2,6 +2,7 @@ const router=require("../http/router").Router();
 const {requireAuth,allowRoles}=require("../middleware/auth");
 const Vial=require("../models/Vial");
 const Donor=require("../models/Donor");
+const Batch=require("../models/Batch");
 const asyncHandler=require("../middleware/asyncHandler");
 const {withTransaction,RouteError,sendRouteError}=require("../services/transactionService");
 const {recordOperationalEvent}=require("../services/operationalAuditService");
@@ -14,6 +15,22 @@ const withoutHistoryUnlessSuperAdmin=(req,record)=>{
   if(req.user.role==="SUPER_ADMIN") return record;
   const {statusHistory,...rest}=record;
   return rest;
+};
+// Older vials stamped the QUARANTINED event with the data-entry time. The batch's
+// quarantine window is the source of truth, so show that instead.
+const withQuarantineDates=async(req,vials)=>{
+  if(req.user.role!=="SUPER_ADMIN"||!vials.length) return vials;
+  const batches=await Batch.find({batchId:{$in:[...new Set(vials.map(vial=>vial.batchId))]}}).select("batchId quarantineStart quarantineEnd collectionAt").lean();
+  const byId=new Map(batches.map(batch=>[batch.batchId,batch]));
+  return vials.map(vial=>{
+    const batch=byId.get(vial.batchId);
+    if(!batch||!Array.isArray(vial.statusHistory)) return vial;
+    const start=batch.quarantineStart||batch.collectionAt;
+    const end=batch.quarantineEnd||vial.quarantineEnd;
+    return {...vial,statusHistory:vial.statusHistory.map(event=>event?.status==="QUARANTINED"
+      ? {...event,at:start||event.at,quarantineEnd:end||event.quarantineEnd,recordedAt:event.recordedAt||event.at}
+      : event)};
+  });
 };
 const escapeRegex=value=>String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
 
@@ -53,10 +70,11 @@ router.get("/",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART_BANK_S
   if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 500 || !Number.isInteger(parsedSkip) || parsedSkip < 0 || parsedSkip > 100000) {
     return res.status(400).json({ success: false, message: "Vial pagination values are invalid", errorCode: "INVALID_PAGINATION" });
   }
-  const [vials, total] = await Promise.all([
+  const [rawVials, total] = await Promise.all([
     Vial.find(filter).sort({createdAt:-1, _id:-1}).skip(parsedSkip).limit(parsedLimit).lean(),
     Vial.countDocuments(filter)
   ]);
+  const vials=await withQuarantineDates(req,rawVials);
   const donors=["HOSPITAL_USER","CHAIN_CEO"].includes(req.user.role) ? [] : await Donor.find({donorId:{$in:[...new Set(vials.map(vial=>vial.donorId))]}}).select("donorId uhid").lean();
   const uhidByDonorId=new Map(donors.map(donor=>[donor.donorId,donor.uhid]));
   const data=vials.map(vial=>{
@@ -79,7 +97,8 @@ router.get("/:vialId",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN","ART
     return res.json({success:true,data:minimizeHospitalVial(vial)});
   }
   const donor=await Donor.findOne({donorId:vial.donorId}).select("uhid").lean();
-  res.json({success:true,data:withoutHistoryUnlessSuperAdmin(req,{...vial,donorUhid:donor?.uhid||vial.donorId})});
+  const [dated]=await withQuarantineDates(req,[vial]);
+  res.json({success:true,data:withoutHistoryUnlessSuperAdmin(req,{...dated,donorUhid:donor?.uhid||vial.donorId})});
 }));
 
 router.patch("/:vialId/status",requireAuth,allowRoles("SUPER_ADMIN","ART_BANK_ADMIN"),asyncHandler(async(req,res)=>{

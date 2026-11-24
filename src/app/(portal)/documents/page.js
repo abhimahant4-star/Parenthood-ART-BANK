@@ -7,6 +7,8 @@ import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadMore, Modal, PageTitle
 import { apiRequest, downloadAttachment } from "@/lib/api";
 import { canOperateBank, validUploadFile } from "@/lib/format";
 
+const DEFAULT_DOCUMENT_TYPES = ["Aadhar Card", "Blood Reports", "Declaration & Affidavits"];
+
 async function uploadPackage(metadata, chosen) {
   const formData = new FormData();
   formData.append("metadata", JSON.stringify({ ...metadata, fileLabels: chosen.map(slot => slot.label.trim()) }));
@@ -78,7 +80,14 @@ function DonorDocumentsModal({ onClose, onSaved }) {
   const [slots, setSlots] = useState(newSlots());
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [types, setTypes] = useState(DEFAULT_DOCUMENT_TYPES);
   const version = useRef(0);
+
+  useEffect(() => {
+    apiRequest("/attachments/document-types")
+      .then(result => setTypes([...(result.data?.defaults || DEFAULT_DOCUMENT_TYPES), ...(result.data?.custom || [])]))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const query = search.trim();
@@ -107,7 +116,9 @@ function DonorDocumentsModal({ onClose, onSaved }) {
     setError("");
     setSaving(true);
     try {
-      await uploadPackage({ hospitalId: "ART_BANK", centreId: "ART_BANK", relatedId: donorId, category: "DONOR_DOCUMENT", label: label.trim() }, checkSlots(slots));
+      const chosen = checkSlots(slots);
+      if (chosen.some(slot => !slot.label.trim())) throw new Error("Choose a document type for each file, or create a new one.");
+      await uploadPackage({ hospitalId: "ART_BANK", centreId: "ART_BANK", relatedId: donorId, category: "DONOR_DOCUMENT", label: label.trim() }, chosen);
       onSaved();
     } catch (saveError) { setError(saveError.message); setSaving(false); }
   };
@@ -136,7 +147,7 @@ function DonorDocumentsModal({ onClose, onSaved }) {
             <strong>Donor documents</strong>
             <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => addSlot(slots, setSlots, setError)}>Add file</button>
           </div>
-          <AttachmentSlots slots={slots} setSlots={setSlots} labelTitle="Document label" placeholder="e.g. Blood screening report" />
+          <AttachmentSlots slots={slots} setSlots={setSlots} labelTitle="Document type" typeOptions={types} />
         </div>
         <p className="small text-secondary mb-0">Files are privately stored, linked to the donor ID, and visible to a hospital only when that donor&apos;s vial has been sent to its centre.</p>
       </form>

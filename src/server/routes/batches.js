@@ -194,7 +194,8 @@ router.post(
           quarantineEnd: end,
           currentLocation: "ART Bank",
           status: "QUARANTINED",
-          statusHistory: [{ status: "QUARANTINED", at: vialCreatedAt }]
+          // Quarantine begins on the collection date, not when the batch was keyed in.
+          statusHistory: [{ status: "QUARANTINED", at: start, quarantineEnd: end, recordedAt: vialCreatedAt, user: req.user.username }]
         }));
         const createdVials = await Vial.insertMany(vials, { session });
         await recordOperationalEvent({
