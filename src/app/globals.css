@@ -239,7 +239,10 @@ a{text-decoration:none}
 .declaration-report-header{display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid #000;padding-bottom:14px;line-height:1.9}
 .declaration-report-header-left{flex:1.5;min-width:0}
 .declaration-report-header-right{flex:1;min-width:0}
-.declaration-report-sample-id{display:flex;align-items:flex-start;gap:5px}
+.declaration-report-sample-id{display:flex;align-items:flex-start;gap:8px}
+.barcode{display:inline-flex;flex-direction:column;align-items:center;line-height:1;color:#000}
+.barcode svg{display:block;max-width:100%;height:auto;fill:#000;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.barcode-text{margin-top:2px;font-size:9px;letter-spacing:.04em}
 .declaration-barcode{display:inline-flex;flex-direction:column;align-items:center;vertical-align:top;font-size:10px;overflow-wrap:anywhere}
 .declaration-barcode-bars{display:block;width:122px;height:24px;background:repeating-linear-gradient(90deg,#000 0 2px,#fff 2px 4px,#000 4px 5px,#fff 5px 8px,#000 8px 9px,#fff 9px 10px)}
 .declaration-report-title{text-align:center!important;font-size:13px!important;font-weight:700;text-decoration:underline;margin:12px 0 22px!important;color:#000!important;letter-spacing:0!important}
@@ -248,7 +251,7 @@ a{text-decoration:none}
 .declaration-report-table-wrap{overflow-x:auto}
 .declaration-report-table{width:100%;min-width:660px;border-collapse:collapse;table-layout:fixed;margin:0!important;color:#000;--bs-table-border-color:#000}
 .declaration-report-table th,.declaration-report-table td{border:1px solid #000!important;background:#fff!important;text-align:center;vertical-align:middle;padding:6px 4px!important;color:#000!important;font-size:10.5px;overflow-wrap:anywhere}
-.declaration-report-table th{height:68px;font-weight:700}
+.declaration-report-table th{height:68px;font-weight:700;font-size:9.5px!important;overflow-wrap:normal!important;word-break:keep-all}
 .declaration-report-table td{height:280px;font-weight:700}
 .declaration-report-table .declaration-report-patient{line-height:1.9;padding:8px 6px!important}
 .declaration-report-id-proof{display:block;margin-top:14px}

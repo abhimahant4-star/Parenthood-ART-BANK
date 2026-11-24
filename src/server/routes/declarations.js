@@ -137,10 +137,18 @@ router.post(
           throw new RouteError(400, "A declaration requires one or more mapped vials from the same donor", "DECLARATION_VIALS_INVALID");
         }
         const linkedDonor = await Donor.findOne({ donorId: mappedVials[0].donorId })
-          .select("donorId uhid manualDonorId name aadhaarMasked bloodGroup height complexion eyeColour hairColour build")
+          .select("donorId uhid manualDonorId name aadhaarMasked bloodGroup height complexion eyeColour hairColour build dob")
           .session(session).lean();
         if (!linkedDonor) throw new RouteError(400, "The mapped vial donor record could not be found", "DECLARATION_DONOR_NOT_FOUND");
         const donorNumber = linkedDonor.manualDonorId || linkedDonor.uhid || linkedDonor.donorId;
+        // Donor age on the sample date, printed as "Age : NN Year(s)" on the declaration.
+        const sampleDay = new Date(/^\d{4}-\d{2}-\d{2}$/.test(declarationData?.sampleDate || "") ? `${declarationData.sampleDate}T00:00:00.000Z` : Date.now());
+        const birth = linkedDonor.dob ? new Date(linkedDonor.dob) : null;
+        let donorAge = "";
+        if (birth && !Number.isNaN(birth.getTime())) {
+          donorAge = sampleDay.getUTCFullYear() - birth.getUTCFullYear();
+          if (sampleDay.getUTCMonth() < birth.getUTCMonth() || (sampleDay.getUTCMonth() === birth.getUTCMonth() && sampleDay.getUTCDate() < birth.getUTCDate())) donorAge -= 1;
+        }
         const [created] = await Declaration.create([{
           declarationId,
           coupleId,
@@ -154,6 +162,7 @@ router.post(
             donorNumber,
             donorUhid: linkedDonor.uhid || "",
             donorName: linkedDonor.name,
+            donorAge,
             bloodGroup: linkedDonor.bloodGroup || "",
             height: linkedDonor.height || "",
             complexion: linkedDonor.complexion || "",

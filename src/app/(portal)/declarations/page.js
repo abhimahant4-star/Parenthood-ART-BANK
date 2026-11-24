@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { DeclarationPreviewModal } from "@/components/DeclarationPaper";
+import { DEFAULT_BANK_NAME, DEFAULT_BANK_REGD_NO, DeclarationPreviewModal } from "@/components/DeclarationPaper";
 import { useSession } from "@/components/SessionProvider";
 import { Alert, Badge, DataTable, Field, Icon, IdTag, LoadErrors, LoadMore, Modal, PageTitle, useLoader, usePagedList } from "@/components/ui";
 import { apiRequest, loadAll } from "@/lib/api";
@@ -10,17 +10,29 @@ import { canOperateBank, localDateTime, todayIso } from "@/lib/format";
 const extractRecords = result => result.data?.records || [];
 const compactId = value => String(value || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 const maskDigits = mask => ((mask || "").length >= 12 ? { first: mask.slice(0, 2), last: mask.slice(-2) } : { first: "", last: "" });
+const nowTime = () => { const now = new Date(); return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; };
+const BANK_KEY = "declarationBankDetails";
+// The bank name and registration number rarely change, so the last ones used are remembered in this browser.
+const rememberedBank = () => {
+  try { return { bankName: DEFAULT_BANK_NAME, bankRegistrationNumber: DEFAULT_BANK_REGD_NO, ...JSON.parse(localStorage.getItem(BANK_KEY) || "{}") }; }
+  catch { return { bankName: DEFAULT_BANK_NAME, bankRegistrationNumber: DEFAULT_BANK_REGD_NO }; }
+};
+const hospitalNames = (hospitals, hospitalId, centreId) => {
+  const hospital = hospitals.find(item => item.hospitalId === hospitalId);
+  return { hospitalName: hospital?.hospitalName || hospitalId, centreName: hospital?.centres?.find(item => item.centreId === centreId)?.centreName || "" };
+};
 
 // Step 1: staff type the donor ID. Step 2: only couple cases whose mapped vials all came from that donor are listed.
-function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
+function NewDeclarationModal({ couples, signers, hospitals, onClose, onSaved }) {
   const today = todayIso();
   const activeSigners = signers.filter(signer => signer.status === "ACTIVE");
+  const [bank, setBank] = useState(rememberedBank);
   const [donorQuery, setDonorQuery] = useState("");
   const [donorMatches, setDonorMatches] = useState([]);
   const [donor, setDonor] = useState(null);
   const [linkedCases, setLinkedCases] = useState([]);
   const [lookup, setLookup] = useState({ busy: false, message: "Type the donor ID, e.g. AB/6283 or AB6283." });
-  const [form, setForm] = useState({ coupleId: "", patientName: "", registrationId: "", date: today, sampleDate: today, signerId: activeSigners[0]?.signerId || "", first: "", last: "" });
+  const [form, setForm] = useState({ coupleId: "", patientName: "", registrationId: "", date: today, reportTime: nowTime(), sampleDate: today, sampleTime: nowTime(), sampleId: "", signerId: activeSigners[0]?.signerId || "", first: "", last: "" });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState(null);
@@ -32,7 +44,7 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
 
   const fillFromCase = selected => setForm(current => ({
     ...current, coupleId: selected?.coupleId || "",
-    patientName: selected?.wife?.name || selected?.husband?.name || "", registrationId: selected?.coupleId || ""
+    patientName: selected?.wife?.name || selected?.husband?.name || ""
   }));
 
   // Loads the donor's vials and keeps only cases whose mapped vials all belong to this donor.
@@ -40,7 +52,7 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
     setDonor(chosen);
     setDonorMatches([]);
     setDonorQuery(chosen.manualDonorId || chosen.uhid || chosen.donorId);
-    setForm(current => ({ ...current, ...maskDigits(chosen.aadhaarMasked) }));
+    setForm(current => ({ ...current, ...maskDigits(chosen.aadhaarMasked), registrationId: chosen.manualDonorId || chosen.uhid || chosen.donorId }));
     setLookup({ busy: true, message: "Finding couple cases linked to this donor…" });
     try {
       const donorVials = (await apiRequest(`/vials?${new URLSearchParams({ donorId: chosen.donorId, limit: "500" })}`)).data || [];
@@ -87,7 +99,10 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
   };
 
   const buildData = () => ({
-    date: form.date, sampleDate: form.sampleDate, patientName: form.patientName.trim(), registrationId: form.registrationId.trim(),
+    date: form.date, reportTime: form.reportTime, sampleDate: form.sampleDate, sampleTime: form.sampleTime, sampleId: form.sampleId.trim(),
+    patientName: form.patientName.trim(), registrationId: form.registrationId.trim(),
+    bankName: bank.bankName.trim(), bankRegistrationNumber: bank.bankRegistrationNumber.trim(),
+    ...hospitalNames(hospitals, couple.hospitalId, couple.centreId),
     vials: couple.mappedVialIds, donor: donor.donorId, aadhaarMasked: `${form.first}••••••••${form.last}`, signerId: form.signerId
   });
 
@@ -107,6 +122,8 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
       declaration: { declarationId: "PREVIEW", coupleId: couple.coupleId, hospitalId: couple.hospitalId, centreId: couple.centreId, vialIds: couple.mappedVialIds, declarationData: { ...buildData(), aadhaarMasked: donor.aadhaarMasked || "" } },
       couple, donor, signer: signers.find(item => item.signerId === form.signerId)
     });
+    // Remember the bank details as soon as they have been previewed.
+    try { localStorage.setItem(BANK_KEY, JSON.stringify(bank)); } catch { /* storage unavailable */ }
   };
 
   const submit = async event => {
@@ -116,6 +133,7 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
     if (problem) return problem === "skip" ? undefined : setError(problem);
     setError("");
     setSaving(true);
+    try { localStorage.setItem(BANK_KEY, JSON.stringify({ bankName: bank.bankName.trim(), bankRegistrationNumber: bank.bankRegistrationNumber.trim() })); } catch { /* storage unavailable */ }
     try {
       await apiRequest("/declarations", { method: "POST", body: { coupleId: couple.coupleId, declarationType: "ART_BANK", confirmations: { detailsVerified: true }, declarationData: buildData() } });
       onSaved();
@@ -169,8 +187,13 @@ function NewDeclarationModal({ couples, signers, onClose, onSaved }) {
                 choices={linkedCases.length ? linkedCases.map(item => ({ value: item.coupleId, label: `${item.coupleId} · ${item.hospitalId} · ${(item.mappedVialIds || []).join(", ")}` })) : [{ value: "", label: "No linked case" }]} />
               <Field {...fieldProps} label="Patient name" name="patientName" required />
               <Field {...fieldProps} label="Registration ID" name="registrationId" required />
-              <Field {...fieldProps} label="Report date" name="date" type="date" required />
-              <Field {...fieldProps} label="Sample date" name="sampleDate" type="date" required />
+              <Field {...fieldProps} label="Sample date" name="sampleDate" type="date" required col="col-md-3" />
+              <Field {...fieldProps} label="Sample time" name="sampleTime" type="time" required col="col-md-3" />
+              <Field {...fieldProps} label="Report date" name="date" type="date" required col="col-md-3" />
+              <Field {...fieldProps} label="Report time" name="reportTime" type="time" required col="col-md-3" />
+              <Field {...fieldProps} label="Sample ID (barcode)" name="sampleId" maxLength={40} placeholder="Leave blank to use the declaration ID" hint="Letters, numbers and symbols print as a barcode." />
+              <Field form={bank} setForm={setBank} label="ART Bank name" name="bankName" required maxLength={120} />
+              <Field form={bank} setForm={setBank} label="ART Bank regd. no." name="bankRegistrationNumber" required maxLength={80} placeholder="e.g. PB/AB/2022/10041/AB/SAS Nagar/017" />
               <Field {...fieldProps} label="Authorised signatory" name="signerId" required choices={activeSigners.length ? activeSigners.map(signer => ({ value: signer.signerId, label: `${signer.name} · ${signer.designation} · v${signer.version}` })) : [{ value: "", label: "No active signatory available" }]} />
               <Field {...fieldProps} label="Donor Aadhaar first two digits" name="first" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
               <Field {...fieldProps} label="Donor Aadhaar last two digits" name="last" required placeholder="00" maxLength={2} inputMode="numeric" readOnly={maskLocked} onValue={digits} />
@@ -262,12 +285,12 @@ export default function DeclarationsPage() {
   const canReview = ["SUPER_ADMIN", "ART_BANK_ADMIN"].includes(user.role);
   const list = usePagedList("/declarations");
   const corrections = usePagedList(hospital || canReview ? "/correction-requests" : "/declarations", {}, hospital || canReview ? extractRecords : () => []);
-  const related = useLoader(() => loadAll({ couples: "/couples?limit=500", vials: "/vials?limit=500", donors: bank ? "/donors?limit=500" : null, signers: bank ? "/signers?limit=500" : null }), [bank]);
+  const related = useLoader(() => loadAll({ couples: "/couples?limit=500", vials: "/vials?limit=500", donors: bank ? "/donors?limit=500" : null, signers: bank ? "/signers?limit=500" : null, hospitals: "/hospitals" }), [bank]);
   const [modal, setModal] = useState(null);
   const [message, setMessage] = useState(null);
 
   const results = related.data?.results || {};
-  const couples = results.couples?.data || [], vials = results.vials?.data || [], donors = results.donors?.data || [], signers = results.signers?.data || [];
+  const couples = results.couples?.data || [], vials = results.vials?.data || [], donors = results.donors?.data || [], signers = results.signers?.data || [], hospitals = results.hospitals?.data || [];
   const unavailable = Boolean(related.data?.errors?.length) || related.loading;
   const requests = hospital || canReview ? corrections.records : [];
 
@@ -282,7 +305,7 @@ export default function DeclarationsPage() {
     const couple = couples.find(item => item.coupleId === declaration.coupleId);
     const donor = donors.find(item => item.donorId === declaration.declarationData?.donor);
     const signer = declaration.signerSnapshot || signers.find(item => item.signerId === declaration.signerId);
-    setModal({ type: "preview", paper: { declaration, couple, donor, signer } });
+    setModal({ type: "preview", paper: { declaration, couple, donor, signer, ...hospitalNames(hospitals, declaration.hospitalId, declaration.centreId) } });
   };
   const runAction = async (action, declaration) => {
     setMessage(null);
@@ -366,7 +389,7 @@ export default function DeclarationsPage() {
           <LoadMore list={corrections} label="correction requests" />
         </div>
       )}
-      {modal?.type === "new" && <NewDeclarationModal couples={modal.couples} signers={signers} onClose={() => setModal(null)} onSaved={finish} />}
+      {modal?.type === "new" && <NewDeclarationModal couples={modal.couples} signers={signers} hospitals={hospitals}onClose={() => setModal(null)} onSaved={finish} />}
       {modal?.type === "preview" && <DeclarationPreviewModal {...modal.paper} onClose={() => setModal(null)} />}
       {modal?.type === "request" && <CorrectionRequestModal declaration={modal.declaration} revisionOf={modal.revisionOf} onClose={() => setModal(null)} onSaved={finish} />}
       {modal?.type === "review" && <ReviewCorrectionModal request={modal.request} onClose={() => setModal(null)} onSaved={finish} />}
